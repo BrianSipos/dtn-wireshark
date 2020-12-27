@@ -19,12 +19,12 @@ jobs:
         sudo cp *.a /usr/lib
     - name: configure
       run: |
-        mkdir wireshark-plugin/build
-        cd wireshark-plugin/build
+        mkdir build
+        cd build
         cmake ..
     - name: build
-      run: cmake --build wireshark-plugin/build/ --target all
+      run: cmake --build build/ --target all
     - name: check
       run: |
-        cd wireshark-plugin/build
+        cd build
         ctest -V
