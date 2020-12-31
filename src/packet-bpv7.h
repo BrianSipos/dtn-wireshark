@@ -147,6 +147,14 @@ void bp_eid_delete(gpointer ptr);
  */
 gboolean bp_eid_equal(gconstpointer a, gconstpointer b);
 
+/// Security marking metadata
+typedef struct {
+    /// Mark the data as security integrity protected
+    gboolean data_i;
+    /// Mark the data as security-modified and not decodable
+    gboolean data_c;
+} security_mark_t;
+
 /// Metadata extracted from the primary block
 typedef struct {
     /// Bundle flags (assumed zero)
@@ -167,6 +175,8 @@ typedef struct {
     BundleCrcType crc_type;
     /// Raw bytes of CRC field
     tvbuff_t *crc_field;
+
+    security_mark_t sec;
 } bp_block_primary_t;
 
 /** Construct a new object on the file allocator.
@@ -193,6 +203,8 @@ typedef struct {
     tvbuff_t *crc_field;
     /// Type-specific data, unencoded
     tvbuff_t *data;
+
+    security_mark_t sec;
 } bp_block_canonical_t;
 
 /** Construct a new object on the file allocator.
@@ -221,6 +233,9 @@ typedef struct {
     bp_block_primary_t *primary;
     /// Additional blocks in order (type bp_block_canonical_t)
     GSequence *blocks;
+    /// Map from block number (guint64) to pointer to block of that number
+    /// (bp_block_canonical_t owned by #blocks)
+    GHashTable *block_nums;
     /// Map from block type code (guint64) to sequence (GPtrArray) of
     /// pointers to block of that type (bp_block_canonical_t owned by #blocks)
     GHashTable *block_types;

@@ -20,11 +20,19 @@ add_library(
 )
 target_compile_definitions(bpsec PRIVATE "WIRESHARK_APIVERS=${WIRESHARK_APIVERS}")
 target_link_libraries(bpsec PUBLIC PkgConfig::WIRESHARK)
-target_link_libraries(bpsec PUBLIC bpv7)
+target_link_libraries(bpsec PRIVATE bpv7)
+
+add_library(
+    bpsec_cose SHARED
+    packet-bpsec-cose.c
+)
+target_compile_definitions(bpsec_cose PRIVATE "WIRESHARK_APIVERS=${WIRESHARK_APIVERS}")
+target_link_libraries(bpsec_cose PUBLIC PkgConfig::WIRESHARK)
+target_link_libraries(bpsec_cose PRIVATE bpsec)
 
 if(INSTALL_MODULE_PATH)
     install(
-        TARGETS tcpclv4 bpv7 bpsec
+        TARGETS tcpclv4 bpv7 bpsec bpsec_cose
         LIBRARY DESTINATION ${INSTALL_MODULE_PATH}
     )
 endif(INSTALL_MODULE_PATH)

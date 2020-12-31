@@ -27,6 +27,9 @@ static int proto_bpsec = -1;
 
 /// Dissect opaque CBOR parameters/results
 static dissector_table_t dissect_media = NULL;
+/// Extension sub-dissectors
+static dissector_table_t param_dissectors = NULL;
+static dissector_table_t result_dissectors = NULL;
 
 static int hf_bib = -1;
 static int hf_bcb = -1;
@@ -64,7 +67,7 @@ static hf_register_info fields[] = {
     {&hf_asb_result_id, {"Type ID", "bpsec.asb.result.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
 };
 
-static const int *asb_flags[] = {
+static int *const asb_flags[] = {
     &hf_asb_flags_has_params,
     &hf_asb_flags_has_secsrc,
     NULL
@@ -98,6 +101,68 @@ static ei_register_info expertitems[] = {
     {&ei_ctxid_zero, {"bpsec.ctxid_zero", PI_SECURITY, PI_WARN, "BPSec Security Context ID zero is reserved", EXPFILL}},
     {&ei_ctxid_priv, {"bpsec.ctxid_priv", PI_SECURITY, PI_NOTE, "BPSec Security Context ID from private/experimental block", EXPFILL}},
 };
+
+bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 type_id) {
+    bpsec_id_t *obj = wmem_new(alloc, bpsec_id_t);
+    obj->context_id = context_id;
+    obj->type_id = type_id;
+    return obj;
+}
+
+void bpsec_id_delete(wmem_allocator_t *alloc, gpointer ptr) {
+    //bpsec_id_t *obj = (bpsec_id_t *)ptr;
+    wmem_free(alloc, ptr);
+}
+
+gboolean bpsec_id_equal(gconstpointer a, gconstpointer b) {
+    const bpsec_id_t *aobj = a;
+    const bpsec_id_t *bobj = b;
+    return (
+        aobj && bobj
+        && (aobj->context_id == bobj->context_id)
+        && (aobj->type_id == bobj->type_id)
+    );
+}
+
+guint bpsec_id_hash(gconstpointer key) {
+    const bpsec_id_t *obj = key;
+    return (
+        g_int64_hash(&(obj->context_id))
+        ^ g_int64_hash(&(obj->type_id))
+    );
+}
+
+/** Dissect an ID-value pair within a context.
+ *
+ * @param dissector
+ * @param typeid
+ * @param tvb
+ * @param pinfo
+ * @param tree
+ */
+static gint dissect_value(dissector_handle_t dissector, gint64 *typeid, tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
+    gint sublen = 0;
+    if (dissector) {
+        sublen = call_dissector_with_data(dissector, tvb, pinfo, tree, typeid);
+        if ((sublen < 0) || ((guint)sublen < tvb_captured_length(tvb))) {
+            //expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_block_partial_decode);
+        }
+    }
+    if ((sublen == 0) && dissect_media) {
+        sublen = dissector_try_string(
+            dissect_media,
+            "application/cbor",
+            tvb,
+            pinfo,
+            tree,
+            NULL
+        );
+    }
+    if (sublen == 0) {
+        sublen = call_data_dissector(tvb, pinfo, tree);
+    }
+    return sublen;
+}
 
 /** Dissector for Bundle Integrity block.
  */
@@ -134,6 +199,21 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
         bp_cbor_chunk_delete(chunk_tgt_list);
     }
 
+    // Mark target blocks
+    for (guint tgt_ix = 0; tgt_ix < targets->len; ++tgt_ix) {
+        const guint64 tgt_blknum = g_array_index(targets, guint64, tgt_ix);
+        if (tgt_blknum == 0) {
+            data->bundle->primary->sec.data_i = TRUE;
+
+        }
+        else {
+            bp_block_canonical_t *found = g_hash_table_lookup(data->bundle->block_nums, &tgt_blknum);
+            if (found) {
+                found->sec.data_i = TRUE;
+            }
+        }
+    }
+
     bp_cbor_chunk_t *chunk_ctxid = bp_scan_cbor_chunk(tvb, offset);
     gint64 *ctxid = cbor_require_int64(chunk_ctxid);
     proto_item *item_ctxid = proto_tree_add_cbor_int64(tree_asb, hf_asb_ctxid, pinfo, tvb, chunk_ctxid, ctxid);
@@ -146,7 +226,6 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
             expert_add_info(pinfo, item_ctxid, &ei_ctxid_priv);
         }
     }
-    bp_cbor_require_delete(ctxid);
     bp_cbor_chunk_delete(chunk_ctxid);
 
     bp_cbor_chunk_t *chunk_flags = bp_scan_cbor_chunk(tvb, offset);
@@ -171,38 +250,39 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
             proto_item *item_param_list = proto_tree_add_int64(tree_asb, hf_asb_param_list, tvb, offset_param_list, 0, chunk_param_list->head_value);
             proto_tree *tree_param_list = proto_item_add_subtree(item_param_list, ett_param_list);
 
-            const gint offset_param_pair = offset;
-            bp_cbor_chunk_t *chunk_param_pair = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 2, 2);
-            if (chunk_param_pair) {
-                proto_item *item_param_pair = proto_tree_add_item(tree_param_list, hf_asb_param_pair, tvb, offset_param_pair, 0, ENC_NA);
-                proto_tree *tree_param_pair = proto_item_add_subtree(item_param_pair, ett_param_pair);
+            // iterate all parameters
+            for (gint64 param_ix = 0; param_ix < chunk_param_list->head_value; ++param_ix) {
+                const gint offset_param_pair = offset;
+                bp_cbor_chunk_t *chunk_param_pair = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 2, 2);
+                if (chunk_param_pair) {
+                    proto_item *item_param_pair = proto_tree_add_item(tree_param_list, hf_asb_param_pair, tvb, offset_param_pair, 0, ENC_NA);
+                    proto_tree *tree_param_pair = proto_item_add_subtree(item_param_pair, ett_param_pair);
 
-                bp_cbor_chunk_t *chunk_paramid = bp_scan_cbor_chunk(tvb, offset);
-                gint64 *paramid = cbor_require_int64(chunk_paramid);
-                proto_tree_add_cbor_int64(tree_param_pair, hf_asb_param_id, pinfo, tvb, chunk_paramid, paramid);
-                offset += chunk_paramid->data_length;
-                if (paramid) {
-                    proto_item_append_text(item_param_pair, ", ID: %" PRIi64, *paramid);
-                }
-                bp_cbor_require_delete(paramid);
-                bp_cbor_chunk_delete(chunk_paramid);
+                    bp_cbor_chunk_t *chunk_paramid = bp_scan_cbor_chunk(tvb, offset);
+                    gint64 *paramid = cbor_require_int64(chunk_paramid);
+                    proto_tree_add_cbor_int64(tree_param_pair, hf_asb_param_id, pinfo, tvb, chunk_paramid, paramid);
+                    offset += chunk_paramid->data_length;
+                    if (paramid) {
+                        proto_item_append_text(item_param_pair, ", ID: %" PRIi64, *paramid);
+                    }
+                    bp_cbor_chunk_delete(chunk_paramid);
 
-                const gint offset_value = offset;
-                cbor_skip_next_item(tvb, &offset);
-                if (dissect_media) {
+                    const gint offset_value = offset;
+                    cbor_skip_next_item(tvb, &offset);
                     tvbuff_t *tvb_value = tvb_new_subset_length(tvb, offset_value, offset - offset_value);
-                    dissector_try_string(
-                        dissect_media,
-                        "application/cbor",
-                        tvb_value,
-                        pinfo,
-                        tree_param_pair,
-                        NULL
-                    );
-                }
 
-                proto_item_set_len(item_param_pair, offset - offset_param_pair);
-                bp_cbor_chunk_delete(chunk_param_pair);
+                    dissector_handle_t value_dissect = NULL;
+                    if (ctxid && paramid) {
+                        bpsec_id_t *key = bpsec_id_new(wmem_packet_scope(), *ctxid, *paramid);
+                        value_dissect = dissector_get_custom_table_handle(param_dissectors, key);
+                        bpsec_id_delete(wmem_packet_scope(), key);
+                    }
+                    dissect_value(value_dissect, paramid, tvb_value, pinfo, tree_param_pair);
+
+                    bp_cbor_require_delete(paramid);
+                    proto_item_set_len(item_param_pair, offset - offset_param_pair);
+                    bp_cbor_chunk_delete(chunk_param_pair);
+                }
             }
 
             proto_item_set_len(item_param_list, offset - offset_param_list);
@@ -235,7 +315,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                 }
 
                 // iterate all results for this target
-                for (gint64 tgt_ix = 0; tgt_ix < chunk_result_tgt_list->head_value; ++tgt_ix) {
+                for (gint64 result_ix = 0; result_ix < chunk_result_tgt_list->head_value; ++result_ix) {
                     const gint offset_result_pair = offset;
                     bp_cbor_chunk_t *chunk_result_pair = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 2, 2);
                     if (chunk_result_pair) {
@@ -249,23 +329,21 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                         if (resultid) {
                             proto_item_append_text(item_result_pair, ", ID: %" PRIi64, *resultid);
                         }
-                        bp_cbor_require_delete(resultid);
                         bp_cbor_chunk_delete(chunk_resultid);
 
                         const gint offset_value = offset;
                         cbor_skip_next_item(tvb, &offset);
-                        if (dissect_media) {
-                            tvbuff_t *tvb_value = tvb_new_subset_length(tvb, offset_value, offset - offset_value);
-                            dissector_try_string(
-                                    dissect_media,
-                                    "application/cbor",
-                                    tvb_value,
-                                    pinfo,
-                                    tree_result_pair,
-                                    NULL
-                            );
-                        }
+                        tvbuff_t *tvb_value = tvb_new_subset_length(tvb, offset_value, offset - offset_value);
 
+                        dissector_handle_t value_dissect = NULL;
+                        if (ctxid && resultid) {
+                            bpsec_id_t *key = bpsec_id_new(wmem_packet_scope(), *ctxid, *resultid);
+                            value_dissect = dissector_get_custom_table_handle(result_dissectors, key);
+                            bpsec_id_delete(wmem_packet_scope(), key);
+                        }
+                        dissect_value(value_dissect, resultid, tvb_value, pinfo, tree_result_pair);
+
+                        bp_cbor_require_delete(resultid);
                         proto_item_set_len(item_result_pair, offset - offset_result_pair);
                         bp_cbor_chunk_delete(chunk_result_pair);
                     }
@@ -280,6 +358,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
         bp_cbor_chunk_delete(chunk_result_all_list);
     }
 
+    bp_cbor_require_delete(ctxid);
     g_array_free(targets, TRUE);
     bp_cbor_require_delete(flags);
 
@@ -317,6 +396,9 @@ static void proto_register_bpsec(void) {
     expert_module_t *expert = expert_register_protocol(proto_bpsec);
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
+    param_dissectors = register_custom_dissector_table("bpsec.param", "BPSec Parameter", proto_bpsec, &bpsec_id_hash, &bpsec_id_equal);
+    result_dissectors = register_custom_dissector_table("bpsec.result", "BPSec Result", proto_bpsec, &bpsec_id_hash, &bpsec_id_equal);
+
     prefs_register_protocol(proto_bpsec, reinit_bpsec);
 }
 
@@ -326,11 +408,11 @@ static void proto_reg_handoff_bpsec(void) {
     /* Packaged extensions */
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_block_bib, proto_bpsec);
-        dissector_add_uint("bpv7.block_type", 99, hdl); //FIXME: placeholder block type ID
+        dissector_add_uint("bpv7.block_type", 192, hdl); //FIXME: placeholder block type ID
     }
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_block_bcb, proto_bpsec);
-        dissector_add_uint("bpv7.block_type", 98, hdl); //FIXME: placeholder block type ID
+        dissector_add_uint("bpv7.block_type", 193, hdl); //FIXME: placeholder block type ID
     }
 
     reinit_bpsec();

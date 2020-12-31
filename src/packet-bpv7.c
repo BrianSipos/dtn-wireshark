@@ -257,7 +257,7 @@ static hf_register_info fields[] = {
     {&hf_status_rep_subj_ref, {"Subject Bundle", "bpv7.status_rep.subj_ref", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
-static const int *bundle_flags[] = {
+static int *const bundle_flags[] = {
     &hf_primary_bundle_flags_deletion_report,
     &hf_primary_bundle_flags_delivery_report,
     &hf_primary_bundle_flags_forwarding_report,
@@ -270,7 +270,7 @@ static const int *bundle_flags[] = {
     NULL
 };
 
-static const int *block_flags[] = {
+static int *const block_flags[] = {
     &hf_canonical_block_flags_remove_no_process,
     &hf_canonical_block_flags_delete_no_process,
     &hf_canonical_block_flags_status_no_process,
@@ -318,6 +318,8 @@ static expert_field ei_block_failed_crc = EI_INIT;
 static expert_field ei_block_num_dupe = EI_INIT;
 static expert_field ei_block_payload_index = EI_INIT;
 static expert_field ei_block_payload_num = EI_INIT;
+static expert_field ei_block_sec_bib_tgt = EI_INIT;
+static expert_field ei_block_sec_bcb_tgt = EI_INIT;
 static expert_field ei_admin_type_unknown = EI_INIT;
 static ei_register_info expertitems[] = {
     {&ei_invalid_bp_version, {"bpv7.invalid_bp_version", PI_MALFORMED, PI_ERROR, "Invalid BP version", EXPFILL}},
@@ -330,6 +332,8 @@ static ei_register_info expertitems[] = {
     {&ei_block_num_dupe, {"bpv7.block_num_dupe", PI_PROTOCOL, PI_WARN, "Duplicate block number", EXPFILL}},
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
     {&ei_block_payload_num, {"bpv7.block_payload_num", PI_PROTOCOL, PI_WARN, "Invalid payload block number", EXPFILL}},
+    {&ei_block_sec_bib_tgt, {"bpv7.bpsec.bib_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is an integrity target", EXPFILL}},
+    {&ei_block_sec_bcb_tgt, {"bpv7.bpsec.bcb_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is a confidentiality target", EXPFILL}},
     {&ei_admin_type_unknown, {"bpv7.admin_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown administrative type code", EXPFILL}},
 };
 
@@ -470,6 +474,7 @@ bp_bundle_t * bp_bundle_new() {
     bp_bundle_t *obj = wmem_new(wmem_file_scope(), bp_bundle_t);
     obj->primary = bp_block_primary_new();
     obj->blocks = g_sequence_new(bp_block_canonical_delete);
+    obj->block_nums = g_hash_table_new_full(g_int64_hash, g_int64_equal, guint64_delete, g_free);
     obj->block_types = g_hash_table_new_full(g_int64_hash, g_int64_equal, guint64_delete, gptrarray_delete);
     return obj;
 }
@@ -478,6 +483,7 @@ void bp_bundle_delete(gpointer ptr) {
     bp_bundle_t *obj = (bp_bundle_t *)ptr;
     bp_block_primary_delete(obj->primary);
     g_sequence_free(obj->blocks);
+    g_hash_table_destroy(obj->block_nums);
     g_hash_table_destroy(obj->block_types);
     file_scope_delete(ptr);
 }
@@ -987,8 +993,10 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     bp_cbor_chunk_delete(chunk);
     block->type_code = type_code;
 
-    // Check duplicate of this type
     if (type_code) {
+        proto_item_append_text(item_block, ": %s", val64_to_str(*type_code, blocktype_vals, "Type %" PRIu64));
+
+        // Check duplicate of this type
         guint64 limit = UINT64_MAX;
         for (int ix = 0; ; ++ix) {
             const blocktype_limit *row = blocktype_limits + ix;
@@ -1012,17 +1020,10 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
                 ++count;
             }
         }
-
         if (count > limit) {
             // First non-identical block triggers the error
             expert_add_info(pinfo, item_type, &ei_block_type_dupe);
         }
-    }
-
-    proto_item_append_text(item_block, ": %s", val64_to_str(*type_code, blocktype_vals, "Type %" PRIu64));
-    dissector_handle_t data_dissect = NULL;
-    if (type_code) {
-        data_dissect = dissector_get_uint_handle(block_dissectors, *type_code);
     }
 
     chunk = bp_scan_cbor_chunk(tvb, offset);
@@ -1102,6 +1103,11 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 
     if (tvb_data) {
         // sub-dissect after all is read
+        dissector_handle_t data_dissect = NULL;
+        if (type_code) {
+            data_dissect = dissector_get_uint_handle(block_dissectors, *type_code);
+        }
+
         if (!data_dissect) {
             expert_add_info(pinfo, item_type, &ei_block_type_unknown);
             call_data_dissector(tvb_data, pinfo, tree_block);
@@ -1140,6 +1146,16 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     }
 
     return offset - start;
+}
+
+/// Mark blocks with BPSec expert info
+static void apply_bpsec_mark(const security_mark_t *sec, packet_info *pinfo, proto_item *pi) {
+    if (sec->data_i) {
+        expert_add_info(pinfo, pi, &ei_block_sec_bib_tgt);
+    }
+    if (sec->data_c) {
+        expert_add_info(pinfo, pi, &ei_block_sec_bcb_tgt);
+    }
 }
 
 /// Top-level protocol dissector
@@ -1213,6 +1229,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
                 );
                 proto_tree_add_ident(tree_bundle, hf_bundle_ident, tvb, ident);
             }
+            apply_bpsec_mark(&(block->sec), pinfo, tree_block);
         }
         else {
             // Non-primary block
@@ -1229,6 +1246,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 
                 g_ptr_array_add(type_list, block);
             }
+            apply_bpsec_mark(&(block->sec), pinfo, tree_block);
         }
 
         proto_item_set_len(item_block, offset - block_start);
@@ -1321,17 +1339,15 @@ static int dissect_payload_admin(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
             expert_add_info(pinfo, item_type, &ei_block_partial_decode);
         }
     }
-    if (sublen == 0) {
-        if (dissect_media) {
-            sublen = dissector_try_string(
-                dissect_media,
-                "application/cbor",
-                tvb_record,
-                pinfo,
-                tree_rec,
-                NULL
-            );
-        }
+    if ((sublen == 0) && dissect_media) {
+        sublen = dissector_try_string(
+            dissect_media,
+            "application/cbor",
+            tvb_record,
+            pinfo,
+            tree_rec,
+            NULL
+        );
     }
     if (sublen == 0) {
         sublen = call_data_dissector(tvb_record, pinfo, tree_rec);
@@ -1461,8 +1477,9 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
             wmem_strbuf_append(status_text, "DELETED");
             sep = TRUE;
         }
-        proto_item_append_text(item_admin, ", Status: %s", wmem_strbuf_get_str(status_text));
-        wmem_strbuf_finalize(status_text);
+        const char *status_buf = wmem_strbuf_finalize(status_text);
+        proto_item_append_text(item_admin, ", Status: %s", status_buf);
+        col_append_sep_fstr(pinfo->cinfo, COL_INFO, NULL, "Status: %s", status_buf);
     }
     if (reason_code) {
         proto_item_append_text(item_admin, ", Reason: %s", val64_to_str(*reason_code, status_report_reason_vals, "%" PRIu64));
@@ -1604,7 +1621,8 @@ static void proto_register_bp(void) {
 
     register_dissector("bpv7", dissect_bp, proto_bp);
     block_dissectors = register_dissector_table("bpv7.block_type", "BPv7 Block", proto_bp, FT_UINT32, BASE_HEX);
-    payload_dissectors = register_dissector_table("bpv7.payload_eid_demux", "BPv7 Payload (by Endpoint ID demux)", proto_bp, FT_STRING, BASE_NONE);
+    // case-sensitive string matching
+    payload_dissectors = register_dissector_table("bpv7.payload_eid_demux", "BPv7 Payload (by Endpoint ID demux)", proto_bp, FT_STRING, FALSE);
     admin_dissectors = register_dissector_table("bpv7.admin_record_type", "BPv7 Administrative Record", proto_bp, FT_UINT32, BASE_HEX);
 
     module_t *module_bp = prefs_register_protocol(proto_bp, reinit_bp);

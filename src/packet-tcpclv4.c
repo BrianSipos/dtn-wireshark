@@ -288,24 +288,24 @@ static hf_register_info fields[] = {
     // Specific extensions
     {&hf_xferext_transferlen_total_len, {"Total Length", "tcpclv4.xferext.transfer_length.total_len", FT_UINT64, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
 };
-static const int *chdr_flags[] = {
+static int *const chdr_flags[] = {
     &hf_chdr_flags_cantls,
     NULL
 };
-static const int *sess_term_flags[] = {
+static int *const sess_term_flags[] = {
     &hf_sess_term_flags_reply,
     NULL
 };
-static const int *xfer_flags[] = {
+static int *const xfer_flags[] = {
     &hf_xfer_flags_start,
     &hf_xfer_flags_end,
     NULL
 };
-static const int *sessext_flags[] = {
+static int *const sessext_flags[] = {
     &hf_sessext_flags_crit,
     NULL
 };
-static const int *xferext_flags[] = {
+static int *const xferext_flags[] = {
     &hf_xferext_flags_crit,
     NULL
 };
@@ -477,12 +477,14 @@ gint frame_loc_compare(gconstpointer a, gconstpointer b, gpointer user_data _U_)
         return 1;
     }
 
+#if 0
     if (aloc->src_ix < bloc->src_ix) {
         return -1;
     }
     else if (aloc->src_ix > bloc->src_ix) {
         return 1;
     }
+#endif
 
     if (aloc->raw_offset < bloc->raw_offset) {
         return -1;
@@ -498,7 +500,9 @@ gboolean frame_loc_equal(gconstpointer a, gconstpointer b) {
     const frame_loc_t *bobj = b;
     return (
         (aobj->frame_num == bobj->frame_num)
+#if 0
         && (aobj->src_ix == bobj->src_ix)
+#endif
         && (aobj->raw_offset == bobj->raw_offset)
     );
 }
@@ -1171,6 +1175,15 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
                         // Set for new item
                         seg_meta->flags = flags;
                     }
+#if 0
+                    {
+                        for (GSequenceIter *it = g_sequence_get_begin_iter(xfer->seg_list);
+                                !g_sequence_iter_is_end(it); it = g_sequence_iter_next(it)) {
+                            const seg_meta_t *seg = g_sequence_get(it);
+                            g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "seq %p loc %d|%d|%d ...\n", (void*)seg, seg->frame_loc.frame_num, seg->frame_loc.src_ix, seg->frame_loc.raw_offset);
+                        }
+                    }
+#endif
 
                     // mark start-of-transfer
                     if (!(seg_meta->related_start)) {

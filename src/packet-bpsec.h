@@ -18,4 +18,28 @@ typedef enum {
     ASB_HAS_SOURCE = 0x02,
 } AsbFlag;
 
+/// Parameter/Result dissector lookup
+typedef struct {
+    /// Security context ID
+    gint64 context_id;
+    /// Parameter/Result ID
+    gint64 type_id;
+} bpsec_id_t;
+
+/** Construct a new ID.
+ */
+bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 type_id);
+
+/** Function to match the GDestroyNotify signature.
+ */
+void bpsec_id_delete(wmem_allocator_t *alloc, gpointer ptr);
+
+/** Function to match the GCompareFunc signature.
+ */
+gboolean bpsec_id_equal(gconstpointer a, gconstpointer b);
+
+/** Function to match the GHashFunc signature.
+ */
+guint bpsec_id_hash(gconstpointer key);
+
 #endif /* WIRESHARK_PLUGIN_SRC_PACKET_BPSEC_H_ */
