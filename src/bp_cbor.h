@@ -8,6 +8,12 @@
 #include <epan/expert.h>
 #include <glib.h>
 
+#if defined(WIRESHARK_NEW_FLAGSPTR)
+#define WS_FIELDTYPE int *const
+#else
+#define WS_FIELDTYPE const int *
+#endif
+
 /// The basic header structure of CBOR encoding
 typedef struct {
     /// The start offset of this header
@@ -174,7 +180,7 @@ proto_item * proto_tree_add_cbor_uint64(proto_tree *tree, int hfindex, packet_in
 
 proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gint64 *value);
 
-proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, int * const *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value);
+proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value);
 
 proto_item * proto_tree_add_cbor_string(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *head);
 

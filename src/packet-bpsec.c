@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-#if WIRESHARK_APIVERS >= 3
+#if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
 #else
 #include <config.h>
@@ -67,7 +67,7 @@ static hf_register_info fields[] = {
     {&hf_asb_result_id, {"Type ID", "bpsec.asb.result.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
 };
 
-static int *const asb_flags[] = {
+static WS_FIELDTYPE asb_flags[] = {
     &hf_asb_flags_has_params,
     &hf_asb_flags_has_secsrc,
     NULL

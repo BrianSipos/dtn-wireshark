@@ -8,7 +8,7 @@
 #include <epan/to_str.h>
 #include <inttypes.h>
 
-#if WIRESHARK_APIVERS >= 3
+#if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
 #else
 #include <config.h>
@@ -49,7 +49,7 @@ static hf_register_info fields[] = {
     {&hf_cose_msg, {"COSE Message", "bpsec.cose.msg", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
-static int *const aad_scope[] = {
+static WS_FIELDTYPE aad_scope[] = {
     &hf_aad_scope_primary,
     &hf_aad_scope_target,
     &hf_aad_scope_security,

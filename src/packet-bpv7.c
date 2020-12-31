@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-#if WIRESHARK_APIVERS >= 3
+#if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
 #else
 #include <config.h>
@@ -257,7 +257,7 @@ static hf_register_info fields[] = {
     {&hf_status_rep_subj_ref, {"Subject Bundle", "bpv7.status_rep.subj_ref", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
-static int *const bundle_flags[] = {
+static WS_FIELDTYPE bundle_flags[] = {
     &hf_primary_bundle_flags_deletion_report,
     &hf_primary_bundle_flags_delivery_report,
     &hf_primary_bundle_flags_forwarding_report,
@@ -270,7 +270,7 @@ static int *const bundle_flags[] = {
     NULL
 };
 
-static int *const block_flags[] = {
+static WS_FIELDTYPE block_flags[] = {
     &hf_canonical_block_flags_remove_no_process,
     &hf_canonical_block_flags_delete_no_process,
     &hf_canonical_block_flags_status_no_process,

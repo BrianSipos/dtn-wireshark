@@ -345,7 +345,7 @@ proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_inf
     return item;
 }
 
-proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, int * const *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value) {
+proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value) {
     header_field_info *field = proto_registrar_get_nth(hfindex);
     size_t flagsize = 0;
     switch (field->type) {

@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-#if WIRESHARK_APIVERS >= 3
+#if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
 #include <epan/dissectors/packet-tls.h>
 #include <epan/dissectors/packet-tls-utils.h>
@@ -22,6 +22,12 @@
 #define TLS_DISSECTOR_NAME "ssl"
 #define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
+#endif
+
+#if defined(WIRESHARK_NEW_FLAGSPTR)
+#define WS_FIELDTYPE int *const
+#else
+#define WS_FIELDTYPE const int *
 #endif
 
 /// Glib logging "domain" name
@@ -288,24 +294,24 @@ static hf_register_info fields[] = {
     // Specific extensions
     {&hf_xferext_transferlen_total_len, {"Total Length", "tcpclv4.xferext.transfer_length.total_len", FT_UINT64, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
 };
-static int *const chdr_flags[] = {
+static WS_FIELDTYPE chdr_flags[] = {
     &hf_chdr_flags_cantls,
     NULL
 };
-static int *const sess_term_flags[] = {
+static WS_FIELDTYPE sess_term_flags[] = {
     &hf_sess_term_flags_reply,
     NULL
 };
-static int *const xfer_flags[] = {
+static WS_FIELDTYPE xfer_flags[] = {
     &hf_xfer_flags_start,
     &hf_xfer_flags_end,
     NULL
 };
-static int *const sessext_flags[] = {
+static WS_FIELDTYPE sessext_flags[] = {
     &hf_sessext_flags_crit,
     NULL
 };
-static int *const xferext_flags[] = {
+static WS_FIELDTYPE xferext_flags[] = {
     &hf_xferext_flags_crit,
     NULL
 };
