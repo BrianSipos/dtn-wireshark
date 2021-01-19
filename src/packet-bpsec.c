@@ -38,7 +38,6 @@ static int hf_asb_target = -1;
 static int hf_asb_ctxid = -1;
 static int hf_asb_flags = -1;
 static int hf_asb_flags_has_params = -1;
-static int hf_asb_flags_has_secsrc = -1;
 static int hf_asb_secsrc = -1;
 static int hf_asb_param_list = -1;
 static int hf_asb_param_pair = -1;
@@ -56,7 +55,6 @@ static hf_register_info fields[] = {
     {&hf_asb_ctxid, {"Context ID", "bpsec.asb.ctxid", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags, {"Flags", "bpv7.asb.flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags_has_params, {"Parameters Present", "bpv7.asb.flags.has_params", FT_UINT8, BASE_DEC, NULL, ASB_HAS_PARAMS, NULL, HFILL}},
-    {&hf_asb_flags_has_secsrc, {"Security Source Present", "bpv7.asb.flags.has_secsrc", FT_UINT8, BASE_DEC, NULL, ASB_HAS_SOURCE, NULL, HFILL}},
     {&hf_asb_secsrc, {"Security Source", "bpsec.asb.secsrc", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_list, {"Security Parameters, Count", "bpsec.asb.param_count", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_pair, {"Parameter", "bpsec.asb.param", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -69,7 +67,6 @@ static hf_register_info fields[] = {
 
 static WS_FIELDTYPE asb_flags[] = {
     &hf_asb_flags_has_params,
-    &hf_asb_flags_has_secsrc,
     NULL
 };
 
@@ -96,14 +93,22 @@ static int *ett[] = {
 static expert_field ei_secsrc_diff = EI_INIT;
 static expert_field ei_ctxid_zero = EI_INIT;
 static expert_field ei_ctxid_priv = EI_INIT;
+static expert_field ei_target_invalid = EI_INIT;
 static ei_register_info expertitems[] = {
     {&ei_secsrc_diff, {"bpsec.secsrc_diff", PI_SECURITY, PI_CHAT, "BPSec Security Source different from bundle Source", EXPFILL}},
     {&ei_ctxid_zero, {"bpsec.ctxid_zero", PI_SECURITY, PI_WARN, "BPSec Security Context ID zero is reserved", EXPFILL}},
     {&ei_ctxid_priv, {"bpsec.ctxid_priv", PI_SECURITY, PI_NOTE, "BPSec Security Context ID from private/experimental block", EXPFILL}},
+    {&ei_target_invalid, {"bpsec.target_invalid", PI_PROTOCOL, PI_WARN, "Target block number not present", EXPFILL}},
 };
 
 bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 type_id) {
-    bpsec_id_t *obj = wmem_new(alloc, bpsec_id_t);
+    bpsec_id_t *obj;
+    if (alloc) {
+        obj = wmem_new(alloc, bpsec_id_t);
+    }
+    else {
+        obj = g_malloc(sizeof(bpsec_id_t));
+    }
     obj->context_id = context_id;
     obj->type_id = type_id;
     return obj;
@@ -187,31 +192,30 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 
         bp_cbor_chunk_t *chunk_tgt = bp_scan_cbor_chunk(tvb, offset);
         guint64 *tgt_blknum = cbor_require_uint64(chunk_tgt);
-        proto_tree_add_cbor_uint64(tree_tgt_list, hf_asb_target, pinfo, tvb, chunk_tgt, tgt_blknum);
+        proto_item *item_tgt = proto_tree_add_cbor_uint64(tree_tgt_list, hf_asb_target, pinfo, tvb, chunk_tgt, tgt_blknum);
         offset += chunk_tgt->data_length;
         if (tgt_blknum) {
             g_array_append_vals(targets, tgt_blknum, 1);
+
+            if (*tgt_blknum == 0) {
+                data->bundle->primary->sec.data_i = TRUE;
+            }
+            else {
+                bp_block_canonical_t *found = g_hash_table_lookup(data->bundle->block_nums, tgt_blknum);
+                if (found) {
+                    found->sec.data_i = TRUE;
+                }
+                else {
+                    expert_add_info(pinfo, item_tgt, &ei_target_invalid);
+                }
+            }
+
         }
         bp_cbor_require_delete(tgt_blknum);
         bp_cbor_chunk_delete(chunk_tgt);
 
         proto_item_set_len(item_tgt_list, offset - offset_tgt_list);
         bp_cbor_chunk_delete(chunk_tgt_list);
-    }
-
-    // Mark target blocks
-    for (guint tgt_ix = 0; tgt_ix < targets->len; ++tgt_ix) {
-        const guint64 tgt_blknum = g_array_index(targets, guint64, tgt_ix);
-        if (tgt_blknum == 0) {
-            data->bundle->primary->sec.data_i = TRUE;
-
-        }
-        else {
-            bp_block_canonical_t *found = g_hash_table_lookup(data->bundle->block_nums, &tgt_blknum);
-            if (found) {
-                found->sec.data_i = TRUE;
-            }
-        }
     }
 
     bp_cbor_chunk_t *chunk_ctxid = bp_scan_cbor_chunk(tvb, offset);
@@ -234,7 +238,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
     offset += chunk_flags->data_length;
     bp_cbor_chunk_delete(chunk_flags);
 
-    if (flags && (*flags & ASB_HAS_SOURCE)) {
+    {
         bp_eid_t *secsrc = bp_eid_new();
         proto_item *item_secsrc = proto_tree_add_cbor_eid(tree_asb, hf_asb_secsrc, pinfo, tvb, &offset, secsrc);
         if (!bp_eid_equal(data->bundle->primary->src_nodeid, secsrc)) {

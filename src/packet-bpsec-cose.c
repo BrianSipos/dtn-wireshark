@@ -168,29 +168,29 @@ static void proto_reg_handoff_bpsec_cose(void) {
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_cose_msg, proto_bpsec_cose);
         {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, 1);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 1);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
         {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, 2);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 2);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
     }
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_cose_x509, proto_bpsec_cose);
         {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, 3);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 3);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
         {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, 4);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 4);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
     }
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_param_scope, proto_bpsec_cose);
         {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, 5);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 5);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
     }
@@ -199,7 +199,7 @@ static void proto_reg_handoff_bpsec_cose(void) {
 
         const gint64 cose_msg_ids[] = {16, 17, 18, 96, 97, 98};
         for (const gint64 *it = cose_msg_ids; it != cose_msg_ids + 6; ++it) {
-            bpsec_id_t *key = bpsec_id_new(wmem_epan_scope(), ctxid, *it);
+            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, *it);
             dissector_add_custom_table_handle("bpsec.result", key, hdl);
         }
     }

@@ -157,6 +157,9 @@ typedef struct {
 
 /// Metadata extracted from the primary block
 typedef struct {
+    /// Display item for the whole block
+    proto_item *item_block;
+
     /// Bundle flags (assumed zero)
     guint64 flags;
     /// Destination EID
@@ -191,6 +194,9 @@ typedef struct {
     /// The index of the block within the bundle.
     /// This is for internal bookkeeping, *not* the block number.
     guint64 index;
+    /// Display item for the whole block
+    proto_item *item_block;
+
     /// Type of this block
     const guint64 *type_code;
     /// Unique identifier for this block
@@ -201,8 +207,11 @@ typedef struct {
     BundleCrcType crc_type;
     /// Raw bytes of CRC field
     tvbuff_t *crc_field;
+
     /// Type-specific data, unencoded
     tvbuff_t *data;
+    /// Type-specific data tree
+    proto_tree *tree_data;
 
     security_mark_t sec;
 } bp_block_canonical_t;
@@ -216,14 +225,6 @@ bp_block_canonical_t * bp_block_canonical_new(guint64 index);
 /** Function to match the GDestroyNotify signature.
  */
 void bp_block_canonical_delete(gpointer ptr);
-
-/** Function to match the GCompareDataFunc signature.
- */
-gint bp_block_compare_index(gconstpointer a, gconstpointer b, gpointer user_data);
-
-/** Function to match the GCompareDataFunc signature.
- */
-gint bp_block_compare_block_number(gconstpointer a, gconstpointer b, gpointer user_data);
 
 /// Metadata extracted per-bundle
 typedef struct {

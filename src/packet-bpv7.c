@@ -423,40 +423,6 @@ void bp_block_canonical_delete(gpointer ptr) {
     file_scope_delete(ptr);
 }
 
-gint bp_block_compare_index(gconstpointer a, gconstpointer b, gpointer user_data _U_) {
-    const bp_block_canonical_t *ablock = a;
-    const bp_block_canonical_t *bblock = b;
-    if (ablock->index < bblock->index) {
-        return -1;
-    }
-    else if (ablock->index > bblock->index) {
-        return 1;
-    }
-    else {
-        return 0;
-    }
-}
-
-gint bp_block_compare_block_number(gconstpointer a, gconstpointer b, gpointer user_data _U_) {
-    const bp_block_canonical_t *ablock = a;
-    const bp_block_canonical_t *bblock = b;
-    if (!(ablock->block_number)) {
-        return -1;
-    }
-    if (!(bblock->block_number)) {
-        return 1;
-    }
-    if (*(ablock->block_number) < *(bblock->block_number)) {
-        return -1;
-    }
-    if (*(ablock->block_number) > *(bblock->block_number)) {
-        return 1;
-    }
-    else {
-        return 0;
-    }
-}
-
 static guint64 * guint64_new(const guint64 val) {
     guint64 *obj = wmem_new(wmem_file_scope(), guint64);
     *obj = val;
@@ -474,7 +440,7 @@ bp_bundle_t * bp_bundle_new() {
     bp_bundle_t *obj = wmem_new(wmem_file_scope(), bp_bundle_t);
     obj->primary = bp_block_primary_new();
     obj->blocks = g_sequence_new(bp_block_canonical_delete);
-    obj->block_nums = g_hash_table_new_full(g_int64_hash, g_int64_equal, guint64_delete, g_free);
+    obj->block_nums = g_hash_table_new_full(g_int64_hash, g_int64_equal, guint64_delete, NULL);
     obj->block_types = g_hash_table_new_full(g_int64_hash, g_int64_equal, guint64_delete, gptrarray_delete);
     return obj;
 }
@@ -837,6 +803,7 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     proto_item *item_block = proto_tree_get_parent(tree_block);
     gint field_ix = 0;
     gint offset = start;
+    block->item_block = item_block;
 
     bp_cbor_chunk_t *chunk_head = cbor_require_array_with_size(tvb, pinfo, item_block, &offset, 8, 11);
     if (!chunk_head) {
@@ -976,6 +943,7 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     proto_item *item_block = proto_tree_get_parent(tree_block);
     gint field_ix = 0;
     gint offset = start;
+    block->item_block = item_block;
 
     bp_cbor_chunk_t *chunk_head = cbor_require_array_with_size(tvb, pinfo, item_block, &offset, 5, 6);
     if (!chunk_head) {
@@ -1063,12 +1031,12 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     bp_cbor_chunk_delete(chunk);
     block->data = tvb_data;
     const guint tvb_data_len = (tvb_data ? tvb_captured_length(tvb_data) : 0);
-    //proto_item *item_data = proto_tree_add_item(tree_block, hf_canonical_data, tvb_data, 0, tvb_data_len, ENC_NA);
     proto_item *item_data = proto_tree_add_uint64(tree_block, hf_canonical_data, tvb_data, 0, tvb_data_len, tvb_data_len);
     proto_tree *tree_data = proto_item_add_subtree(item_data, ett_canonical_data);
     if (!tvb_data) {
         expert_add_info_format(pinfo, item_data, &ei_item_missing, "Data field is missing");
     }
+    block->tree_data = tree_data;
 
     switch (block->crc_type) {
         case BP_CRC_NONE:
@@ -1101,47 +1069,30 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
             break;
     }
 
-    if (tvb_data) {
-        // sub-dissect after all is read
-        dissector_handle_t data_dissect = NULL;
-        if (type_code) {
-            data_dissect = dissector_get_uint_handle(block_dissectors, *type_code);
-        }
+    g_sequence_append(bundle->blocks, block);
 
-        if (!data_dissect) {
-            expert_add_info(pinfo, item_type, &ei_block_type_unknown);
-            call_data_dissector(tvb_data, pinfo, tree_block);
+    if (block->type_code) {
+        GPtrArray *type_list = g_hash_table_lookup(bundle->block_types, block->type_code);
+        if (!type_list) {
+            type_list = g_ptr_array_new();
+            g_hash_table_insert(bundle->block_types, guint64_new(*(block->type_code)), type_list);
+        }
+        g_ptr_array_add(type_list, block);
+    }
+    if (block->block_number) {
+        GPtrArray *found = g_hash_table_lookup(bundle->block_nums, block->block_number);
+        if (found) {
+            expert_add_info(pinfo, item_block_num, &ei_block_num_dupe);
         }
         else {
-            bp_dissector_data_t dissect_data;
-            dissect_data.bundle = bundle;
-            dissect_data.block = block;
-            const int sublen = call_dissector_with_data(data_dissect, tvb_data, pinfo, tree_data, &dissect_data);
-            if ((sublen < 0) || ((guint)sublen < tvb_data_len)) {
-                expert_add_info(pinfo, item_block, &ei_block_partial_decode);
-            }
+            g_hash_table_insert(bundle->block_nums, guint64_new(*(block->block_number)), block);
         }
     }
-
-    GSequenceIter *same_num = g_sequence_lookup(bundle->blocks, block, bp_block_compare_block_number, NULL);
-    if (same_num) {
-        expert_add_info(pinfo, item_block_num, &ei_block_num_dupe);
-    }
-
-    GSequenceIter *block_iter = g_sequence_lookup(bundle->blocks, block, bp_block_compare_index, NULL);
-    if (!block_iter) {
-        block_iter = g_sequence_insert_sorted(bundle->blocks, block, bp_block_compare_index, NULL);
-    }
-
     // Payload block requirements
     if (block->type_code && (*(block->type_code) == BP_BLOCKTYPE_PAYLOAD)) {
         // must have index zero
         if (block->block_number && (*(block->block_number) != 1)) {
             expert_add_info(pinfo, item_block_num, &ei_block_payload_num);
-        }
-        // must be last block
-        if (!g_sequence_iter_is_end(g_sequence_iter_next(block_iter))) {
-            expert_add_info(pinfo, item_block, &ei_block_payload_index);
         }
     }
 
@@ -1229,28 +1180,63 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
                 );
                 proto_tree_add_ident(tree_bundle, hf_bundle_ident, tvb, ident);
             }
-            apply_bpsec_mark(&(block->sec), pinfo, tree_block);
         }
         else {
             // Non-primary block
             proto_item_prepend_text(item_block, "Canonical ");
             bp_block_canonical_t *block = bp_block_canonical_new(block_ix);
             offset += dissect_block_canonical(tvb, pinfo, tree_block, offset, block, bundle);
-
-            if (block->type_code) {
-                GPtrArray *type_list = g_hash_table_lookup(bundle->block_types, block->type_code);
-                if (!type_list) {
-                    type_list = g_ptr_array_new();
-                    g_hash_table_insert(bundle->block_types, guint64_new(*(block->type_code)), type_list);
-                }
-
-                g_ptr_array_add(type_list, block);
-            }
-            apply_bpsec_mark(&(block->sec), pinfo, tree_block);
         }
 
         proto_item_set_len(item_block, offset - block_start);
         block_ix++;
+    }
+
+    // Handle block-type-specific data after all blocks are present
+    for (GSequenceIter *block_iter = g_sequence_get_begin_iter(bundle->blocks);
+        !g_sequence_iter_is_end(block_iter);
+        block_iter = g_sequence_iter_next(block_iter)) {
+        bp_block_canonical_t *block = g_sequence_get(block_iter);
+
+        // Payload block requirements
+        if (*(block->type_code) == BP_BLOCKTYPE_PAYLOAD) {
+            // must be last block
+            if (!g_sequence_iter_is_end(g_sequence_iter_next(block_iter))) {
+                expert_add_info(pinfo, block->item_block, &ei_block_payload_index);
+            }
+        }
+
+        if (block->data) {
+            // sub-dissect after all is read
+            dissector_handle_t data_dissect = NULL;
+            if (block->type_code) {
+                data_dissect = dissector_get_uint_handle(block_dissectors, *(block->type_code));
+            }
+
+            if (!data_dissect) {
+                expert_add_info(pinfo, proto_tree_get_parent(block->tree_data), &ei_block_type_unknown);
+                call_data_dissector(block->data, pinfo, block->tree_data);
+            }
+            else {
+                bp_dissector_data_t dissect_data;
+                dissect_data.bundle = bundle;
+                dissect_data.block = block;
+                const int sublen = call_dissector_with_data(data_dissect, block->data, pinfo, block->tree_data, &dissect_data);
+                const guint tvb_data_len = tvb_captured_length(block->data);
+                if ((sublen < 0) || ((guint)sublen < tvb_data_len)) {
+                    expert_add_info(pinfo, block->item_block, &ei_block_partial_decode);
+                }
+            }
+        }
+    }
+
+    // Block-data-derived markings
+    apply_bpsec_mark(&(bundle->primary->sec), pinfo, bundle->primary->item_block);
+    for (GSequenceIter *block_iter = g_sequence_get_begin_iter(bundle->blocks);
+        !g_sequence_iter_is_end(block_iter);
+        block_iter = g_sequence_iter_next(block_iter)) {
+        bp_block_canonical_t *block = g_sequence_get(block_iter);
+        apply_bpsec_mark(&(block->sec), pinfo, block->item_block);
     }
 
     proto_item_append_text(item_bundle, ", Blocks: %"PRIu64, block_ix);

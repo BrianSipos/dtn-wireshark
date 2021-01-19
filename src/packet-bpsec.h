@@ -14,8 +14,6 @@
 typedef enum {
     /// Security Parameters present
     ASB_HAS_PARAMS = 0x01,
-    /// Security Source present
-    ASB_HAS_SOURCE = 0x02,
 } AsbFlag;
 
 /// Parameter/Result dissector lookup
