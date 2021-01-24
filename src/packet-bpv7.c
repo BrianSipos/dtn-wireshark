@@ -18,6 +18,9 @@
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
 #endif
 
+/// Protocol column name
+const char *const proto_name_bp = "BPv7";
+
 /// Protocol preferences and defaults
 static gboolean bp_compute_crc = TRUE;
 
@@ -1111,13 +1114,13 @@ static void apply_bpsec_mark(const security_mark_t *sec, packet_info *pinfo, pro
 
 /// Top-level protocol dissector
 static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
-    gint offset = 0;
     {
         const gchar *proto_name = col_get_text(pinfo->cinfo, COL_PROTOCOL);
-        if (proto_name && (strncmp(proto_name, "BPv7", 5) != 0)) {
-            col_set_str(pinfo->cinfo, COL_PROTOCOL, "BPv7");
+        if (g_strcmp0(proto_name, proto_name_bp) != 0) {
+            col_set_str(pinfo->cinfo, COL_PROTOCOL, proto_name_bp);
         }
     }
+    gint offset = 0;
 
     proto_item *item_bundle = proto_tree_add_item(tree, hf_bundle, tvb, 0, 0, ENC_NA);
     proto_tree *tree_bundle = proto_item_add_subtree(item_bundle, ett_bundle);

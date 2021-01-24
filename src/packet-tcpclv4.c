@@ -32,6 +32,8 @@
 
 /// Glib logging "domain" name
 static const char *LOG_DOMAIN = "tcpclv4";
+/// Protocol column name
+const char *const proto_name_tcpcl = "TCPCLv4";
 
 /// Protocol preferences and defaults
 static const guint TCPCL_PORT_NUM = 4556;
@@ -50,8 +52,8 @@ static dissector_handle_t handle_bp = NULL;
 /// Dissect opaque CBOR parameters/results
 static dissector_table_t dissect_media = NULL;
 /// Extension sub-dissectors
-static dissector_table_t sess_ext_dissectors;
-static dissector_table_t xfer_ext_dissectors;
+static dissector_table_t sess_ext_dissectors = NULL;
+static dissector_table_t xfer_ext_dissectors = NULL;
 
 /// Transfer reassembly
 static reassembly_table tcpcl_reassembly_table;
@@ -1547,6 +1549,14 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
 
 /// Top-level protocol dissector
 static int dissect_tcpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data) {
+    {
+        const gchar *proto_name = col_get_text(pinfo->cinfo, COL_PROTOCOL);
+        if (g_strcmp0(proto_name, proto_name_tcpcl) != 0) {
+            col_set_str(pinfo->cinfo, COL_PROTOCOL, proto_name_tcpcl);
+            col_clear(pinfo->cinfo, COL_INFO);
+        }
+    }
+
     /* Retrieve information from conversation, or add it if it isn't
      * there yet */
     conversation_t *convo = find_or_create_conversation(pinfo);
@@ -1560,14 +1570,6 @@ static int dissect_tcpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
         tcpcl_convo->active->port = pinfo->srcport;
         copy_address_wmem(wmem_file_scope(), &(tcpcl_convo->passive->addr), &(pinfo->dst));
         tcpcl_convo->passive->port = pinfo->destport;
-    }
-
-    {
-        const gchar *proto_name = col_get_text(pinfo->cinfo, COL_PROTOCOL);
-        if (proto_name && (strncmp(proto_name, "TCPCLv4", 8) != 0)) {
-            col_set_str(pinfo->cinfo, COL_PROTOCOL, "TCPCLv4");
-            col_clear(pinfo->cinfo, COL_INFO);
-        }
     }
 
     proto_item *item_tcpcl = proto_tree_add_item(tree, hf_tcpcl, tvb, 0, 0, ENC_NA);
@@ -1633,8 +1635,8 @@ static void proto_register_tcpcl(void) {
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
     handle_tcpcl = register_dissector("tcpclv4", dissect_tcpcl, proto_tcpcl);
-    sess_ext_dissectors = register_dissector_table("tcpclv4.sess_ext", "TCPCLv4 Session Extension", proto_tcpcl, FT_UINT16, BASE_HEX);
-    xfer_ext_dissectors = register_dissector_table("tcpclv4.xfer_ext", "TCPCLv4 Transfer Extension", proto_tcpcl, FT_UINT16, BASE_HEX);
+    sess_ext_dissectors = register_dissector_table("tcpclv4.sess_ext", "TCPCLv4 Session Extension", proto_tcpcl, FT_UINT16, BASE_DEC);
+    xfer_ext_dissectors = register_dissector_table("tcpclv4.xfer_ext", "TCPCLv4 Transfer Extension", proto_tcpcl, FT_UINT16, BASE_DEC);
 
     module_t *module_tcpcl = prefs_register_protocol(proto_tcpcl, reinit_tcpcl);
     /*
