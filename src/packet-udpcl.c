@@ -47,7 +47,7 @@ static int hf_padding = -1;
 /// Field definitions
 static hf_register_info fields[] = {
     {&hf_udpcl, {"UDP Convergence Layer", "udpcl", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_padding, {"padding", "udpcl.padding", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_padding, {"Padding", "udpcl.padding", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
 static int ett_udpcl = -1;
@@ -79,12 +79,16 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
 
     col_append_str(pinfo->cinfo, COL_INFO, "UDPCL");
 
-    if (tvb_get_gint8(tvb, 0) == '\0') {
-        proto_item *item_pad = proto_tree_add_item(tree_udpcl, hf_udpcl, tvb, 0, buflen, ENC_NA);
-        expert_add_info(pinfo, item_pad, &ei_pad_size);
+    if (tvb_get_guint8(tvb, 0) == 0x0) {
+        col_append_str(pinfo->cinfo, COL_INFO, " Padding");
+
+        proto_item *item_pad = proto_tree_add_item(tree_udpcl, hf_padding, tvb, 0, buflen, ENC_NA);
+        if (buflen != 4) {
+            expert_add_info(pinfo, item_pad, &ei_pad_size);
+        }
 
         for (guint ix = 1; ix < buflen; ++ix) {
-            if (tvb_get_gint8(tvb, ix) != '\0') {
+            if (tvb_get_guint8(tvb, ix) != 0x0) {
                 expert_add_info(pinfo, item_pad, &ei_pad_nonzero);
                 break;
             }
