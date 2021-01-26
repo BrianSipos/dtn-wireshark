@@ -46,7 +46,7 @@ static hf_register_info fields[] = {
     {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_UINT8, BASE_DEC, NULL, HAS_SECURITY_CTX, NULL, HFILL}},
     {&hf_cose_x509, {"COSE Certificates", "bpsec.cose.x509", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_cert, {"PKIX Certificate", "bpsec.cose.cert", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_cose_msg, {"COSE Message", "bpsec.cose.msg", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
 static WS_FIELDTYPE aad_scope[] = {
@@ -121,12 +121,12 @@ static int dissect_cose_x509(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    proto_item *item_msg = proto_tree_add_item(tree, hf_cose_msg, tvb, 0, 0, ENC_NA);
-    proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
-
     bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, 0);
     tvbuff_t *tvb_data = cbor_require_string(tvb, chunk);
     offset += chunk->data_length;
+
+    proto_item *item_msg = proto_tree_add_item(tree, hf_cose_msg, tvb, 0, offset, ENC_NA);
+    proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
 
     if (tvb_data) {
         dissector_try_string(
