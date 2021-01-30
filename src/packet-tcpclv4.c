@@ -278,7 +278,7 @@ static hf_register_info fields[] = {
         {"Transfer fragment too long", "tcpclv4.xferload.fragment.too_long_fragment",
         FT_BOOLEAN, 0, NULL, 0x00, NULL, HFILL } },
     {&hf_xferload_fragment_error,
-        {"Message defragmentation error", "tcpclv4.xferload.fragment.error",
+        {"Transfer defragmentation error", "tcpclv4.xferload.fragment.error",
         FT_FRAMENUM, BASE_NONE, NULL, 0x00, NULL, HFILL } },
     {&hf_xferload_fragment_count,
         {"Transfer fragment count", "tcpclv4.xferload.fragment.count",
@@ -1285,14 +1285,12 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
                                 data_load, data_len,
                                 !(flags & TCPCL_TRANSFER_FLAG_END)
                         );
-
-                        gboolean update_info = TRUE;
                         xferload_tvb = process_reassembled_data(
                                 tvb, data_offset, pinfo,
                                 "Reassembled Transfer",
                                 xferload_frag_msg,
                                 &xferload_frag_items,
-                                &update_info,
+                                NULL,
                                 proto_tree_get_parent_tree(tree)
                         );
                     }

@@ -5,6 +5,7 @@
 #include <epan/proto.h>
 #include <epan/expert.h>
 #include <epan/to_str.h>
+#include <epan/reassemble.h>
 #include <wsutil/crc16.h>
 #include <wsutil/crc32.h>
 #include <stdio.h>
@@ -23,6 +24,7 @@ const char *const proto_name_bp = "BPv7";
 
 /// Protocol preferences and defaults
 static gboolean bp_compute_crc = TRUE;
+static gboolean bp_reassemble_payload = TRUE;
 
 /// Protocol handles
 static int proto_bp = -1;
@@ -35,6 +37,9 @@ static dissector_table_t dissect_media = NULL;
 static dissector_table_t block_dissectors = NULL;
 static dissector_table_t payload_dissectors = NULL;
 static dissector_table_t admin_dissectors = NULL;
+
+/// Fragment reassembly
+static reassembly_table bp_reassembly_table;
 
 static const val64_string eid_schemes[] = {
     {EID_SCHEME_DTN, "dtn"},
@@ -173,6 +178,20 @@ static int hf_status_rep_subj_payload_len = -1;
 static int hf_status_rep_subj_ident = -1;
 static int hf_status_rep_subj_ref = -1;
 
+static int hf_payload_fragments = -1;
+static int hf_payload_fragment = -1;
+static int hf_payload_fragment_overlap = -1;
+static int hf_payload_fragment_overlap_conflicts = -1;
+static int hf_payload_fragment_multiple_tails = -1;
+static int hf_payload_fragment_too_long_fragment = -1;
+static int hf_payload_fragment_error = -1;
+static int hf_payload_fragment_count = -1;
+static int hf_payload_reassembled_in = -1;
+static int hf_payload_reassembled_length = -1;
+static int hf_payload_reassembled_data = -1;
+static gint ett_payload_fragment = -1;
+static gint ett_payload_fragments = -1;
+
 /// Field definitions
 static hf_register_info fields[] = {
     {&hf_bundle, {"Bundle Protocol Version 7", "bpv7", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -232,6 +251,42 @@ static hf_register_info fields[] = {
     {&hf_canonical_crc_type, {"CRC Type", "bpv7.canonical.crc_type", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(crc_vals), 0x0, NULL, HFILL}},
     {&hf_canonical_data, {"Block Type-Specific Data", "bpv7.canonical.data", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_canonical_crc_field, {"CRC Field", "bpv7.canonical.crc_field", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+
+    {&hf_payload_fragments,
+        {"Payload fragments", "tcpclv4.payload.fragments",
+        FT_NONE, BASE_NONE, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment,
+        {"Payload fragment", "tcpclv4.payload.fragment",
+        FT_FRAMENUM, BASE_NONE, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_overlap,
+        {"Payload fragment overlap", "tcpclv4.payload.fragment.overlap",
+        FT_BOOLEAN, 0, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_overlap_conflicts,
+        {"Payload fragment overlapping with conflicting data",
+        "tcpclv4.payload.fragment.overlap.conflicts",
+        FT_BOOLEAN, 0, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_multiple_tails,
+        {"Message has multiple tail fragments",
+        "tcpclv4.payload.fragment.multiple_tails",
+        FT_BOOLEAN, 0, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_too_long_fragment,
+        {"Payload fragment too long", "tcpclv4.payload.fragment.too_long_fragment",
+        FT_BOOLEAN, 0, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_error,
+        {"Payload defragmentation error", "tcpclv4.payload.fragment.error",
+        FT_FRAMENUM, BASE_NONE, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_fragment_count,
+        {"Payload fragment count", "tcpclv4.payload.fragment.count",
+        FT_UINT32, BASE_DEC, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_reassembled_in,
+        {"Reassembled in", "tcpclv4.payload.reassembled.in",
+        FT_FRAMENUM, BASE_NONE, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_reassembled_length,
+        {"Reassembled length", "tcpclv4.payload.reassembled.length",
+        FT_UINT32, BASE_DEC, NULL, 0x00, NULL, HFILL } },
+    {&hf_payload_reassembled_data,
+        {"Reassembled data", "tcpclv4.payload.reassembled.data",
+        FT_BYTES, BASE_NONE, NULL, 0x00, NULL, HFILL } },
 
     {&hf_previous_node_nodeid, {"Previous Node ID", "bpv7.previous_node.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
@@ -309,6 +364,29 @@ static int *ett[] = {
     &ett_status_rep,
     &ett_status_info,
     &ett_status_assert,
+    &ett_payload_fragment,
+    &ett_payload_fragments,
+};
+
+static const fragment_items payload_frag_items = {
+    /* Fragment subtrees */
+    &ett_payload_fragment,
+    &ett_payload_fragments,
+    /* Fragment fields */
+    &hf_payload_fragments,
+    &hf_payload_fragment,
+    &hf_payload_fragment_overlap,
+    &hf_payload_fragment_overlap_conflicts,
+    &hf_payload_fragment_multiple_tails,
+    &hf_payload_fragment_too_long_fragment,
+    &hf_payload_fragment_error,
+    &hf_payload_fragment_count,
+    /* Reassembled in field */
+    &hf_payload_reassembled_in,
+    &hf_payload_reassembled_length,
+    &hf_payload_reassembled_data,
+    /* Tag */
+    "Payload fragments"
 };
 
 static expert_field ei_invalid_bp_version = EI_INIT;
@@ -321,6 +399,7 @@ static expert_field ei_block_failed_crc = EI_INIT;
 static expert_field ei_block_num_dupe = EI_INIT;
 static expert_field ei_block_payload_index = EI_INIT;
 static expert_field ei_block_payload_num = EI_INIT;
+static expert_field ei_block_is_fragment = EI_INIT;
 static expert_field ei_block_sec_bib_tgt = EI_INIT;
 static expert_field ei_block_sec_bcb_tgt = EI_INIT;
 static expert_field ei_admin_type_unknown = EI_INIT;
@@ -335,6 +414,7 @@ static ei_register_info expertitems[] = {
     {&ei_block_num_dupe, {"bpv7.block_num_dupe", PI_PROTOCOL, PI_WARN, "Duplicate block number", EXPFILL}},
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
     {&ei_block_payload_num, {"bpv7.block_payload_num", PI_PROTOCOL, PI_WARN, "Invalid payload block number", EXPFILL}},
+    {&ei_block_is_fragment, {"bpv7.block_is_fragment", PI_PROTOCOL, PI_NOTE, "Invalid payload block number", EXPFILL}},
     {&ei_block_sec_bib_tgt, {"bpv7.bpsec.bib_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is an integrity target", EXPFILL}},
     {&ei_block_sec_bcb_tgt, {"bpv7.bpsec.bcb_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is a confidentiality target", EXPFILL}},
     {&ei_admin_type_unknown, {"bpv7.admin_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown administrative type code", EXPFILL}},
@@ -1490,34 +1570,94 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     if (!context) {
         return -1;
     }
+    const bp_bundle_t *bundle = context->bundle;
 
     // Parent bundle tree
     proto_tree *tree_block = proto_tree_get_parent_tree(tree);
+    proto_tree *item_block = proto_tree_get_parent(tree_block);
     proto_tree *tree_bundle = proto_tree_get_parent_tree(tree_block);
     proto_tree *item_bundle = proto_tree_get_parent(tree_bundle);
     // Back up to top-level
     proto_item *tree_top = proto_tree_get_parent_tree(tree_bundle);
 
-    // Visible in new source
-    tvbuff_t *tvb_payload = tvb_new_subset_remaining(tvb, 0);
-    add_new_data_source(pinfo, tvb_payload, "Bundle Payload");
-    col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle");
-
-    if (context->bundle->primary->flags & BP_BUNDLE_PAYLOAD_ADMIN) {
+    const gboolean is_fragment = bundle->primary->flags & BP_BUNDLE_IS_FRAGMENT;
+    const gboolean is_admin = bundle->primary->flags & BP_BUNDLE_PAYLOAD_ADMIN;
+    if (is_admin) {
         proto_item_append_text(item_bundle, ", ADMIN");
     }
-    if (context->bundle->primary->flags & BP_BUNDLE_IS_FRAGMENT) {
+    if (is_fragment) {
         proto_item_append_text(item_bundle, ", FRAGMENT");
+        expert_add_info(pinfo, item_block, &ei_block_is_fragment);
     }
-    proto_item_append_text(item_bundle, ", Payload-Size: %d", tvb_captured_length(tvb_payload));
+    const guint payload_len = tvb_captured_length(tvb);
+    proto_item_append_text(item_bundle, ", Payload-Size: %d", payload_len);
+
+    // identify bundle regardless of payload decoding
+    col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle");
+    if (is_fragment) {
+        col_append_str(pinfo->cinfo, COL_INFO, " fragment");
+    }
+
+    // Set if the payload is fully defragmented
+    tvbuff_t *tvb_payload = NULL;
+    if (is_fragment) {
+        if (bp_reassemble_payload) {
+            if (!(bundle->primary->frag_offset
+                  && bundle->primary->total_len)) {
+                return -1;
+            }
+            // correlate by non-fragment bundle identity hash
+            bp_bundle_ident_t *corr_ident = bp_bundle_ident_new(
+                bundle->primary->src_nodeid,
+                &(bundle->primary->ts),
+                NULL,
+                NULL
+            );
+            // wireshark fragment set IDs are 32-bits only
+            const guint32 corr_id = bp_bundle_ident_hash(corr_ident);
+            bp_bundle_ident_delete(corr_ident);
+
+            //FIXME: handle size overflows
+            const guint32 frag_offset = *(bundle->primary->frag_offset);
+            const gboolean more_frags = (
+                *(bundle->primary->frag_offset) + payload_len
+                < *(bundle->primary->total_len)
+            );
+
+            const void *data_load = tvb_memdup(wmem_file_scope(), tvb, 0, payload_len);
+            fragment_head *payload_frag_msg = fragment_add(
+                    &bp_reassembly_table,
+                    tvb, 0, pinfo,
+                    corr_id,
+                    data_load,
+                    frag_offset,
+                    payload_len,
+                    more_frags
+            );
+            tvb_payload = process_reassembled_data(
+                    tvb, 0, pinfo,
+                    "Reassembled Payload",
+                    payload_frag_msg,
+                    &payload_frag_items,
+                    NULL,
+                    tree_bundle
+            );
+        }
+    }
+    else {
+        tvb_payload = tvb;
+    }
+    if (!tvb_payload) {
+        return payload_len;
+    }
 
     // Payload is known to be administrative, independent of Node ID
-    if (context->bundle->primary->flags & BP_BUNDLE_PAYLOAD_ADMIN) {
+    if (is_admin) {
         col_append_str(pinfo->cinfo, COL_INFO, " [Admin]");
         return dissect_payload_admin(tvb_payload, pinfo, tree_top, context);
     }
 
-    const char *eid_uri = context->bundle->primary->dst_eid->uri;
+    const char *eid_uri = bundle->primary->dst_eid->uri;
     dissector_handle_t payload_dissect = NULL;
     if (eid_uri) {
         payload_dissect = dissector_get_string_handle(payload_dissectors, eid_uri);
@@ -1625,6 +1765,18 @@ static void proto_register_bp(void) {
         "Compute and compare CRCs",
         "If enabled, the blocks will have CRC checks performed.",
         &bp_compute_crc
+    );
+    prefs_register_bool_preference(
+        module_bp,
+        "reassemble_payload",
+        "Reassemble fragmented payloads",
+        "Whether the dissector should reassemble fragmented bundle payloads.",
+        &bp_reassemble_payload
+    );
+
+    reassembly_table_register(
+        &bp_reassembly_table,
+        &addresses_reassembly_table_functions
     );
 }
 
