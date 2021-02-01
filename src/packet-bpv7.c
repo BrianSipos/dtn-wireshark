@@ -177,6 +177,7 @@ static int hf_status_rep_subj_frag_offset = -1;
 static int hf_status_rep_subj_payload_len = -1;
 static int hf_status_rep_subj_ident = -1;
 static int hf_status_rep_subj_ref = -1;
+static int hf_status_time_diff = -1;
 
 static int hf_payload_fragments = -1;
 static int hf_payload_fragment = -1;
@@ -313,6 +314,7 @@ static hf_register_info fields[] = {
     {&hf_status_rep_subj_payload_len, {"Subject Payload Length", "bpv7.status_rep.subj_payload_len", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ident, {"Subject Identity", "bpv7.status_rep.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ref, {"Subject Bundle", "bpv7.status_rep.subj_ref", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_status_time_diff, {"Status Time", "bpv7.status_rep.time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
 static WS_FIELDTYPE bundle_flags[] = {
@@ -400,6 +402,7 @@ static expert_field ei_block_num_dupe = EI_INIT;
 static expert_field ei_block_payload_index = EI_INIT;
 static expert_field ei_block_payload_num = EI_INIT;
 static expert_field ei_block_is_fragment = EI_INIT;
+static expert_field ei_fragment_tot_mismatch = EI_INIT;
 static expert_field ei_block_sec_bib_tgt = EI_INIT;
 static expert_field ei_block_sec_bcb_tgt = EI_INIT;
 static expert_field ei_admin_type_unknown = EI_INIT;
@@ -415,6 +418,7 @@ static ei_register_info expertitems[] = {
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
     {&ei_block_payload_num, {"bpv7.block_payload_num", PI_PROTOCOL, PI_WARN, "Invalid payload block number", EXPFILL}},
     {&ei_block_is_fragment, {"bpv7.block_is_fragment", PI_PROTOCOL, PI_NOTE, "Invalid payload block number", EXPFILL}},
+    {&ei_fragment_tot_mismatch, {"bpv7.fragment_tot_mismatch", PI_PROTOCOL, PI_ERROR, "Inconsistent total length between fragments", EXPFILL}},
     {&ei_block_sec_bib_tgt, {"bpv7.bpsec.bib_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is an integrity target", EXPFILL}},
     {&ei_block_sec_bcb_tgt, {"bpv7.bpsec.bcb_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is a confidentiality target", EXPFILL}},
     {&ei_admin_type_unknown, {"bpv7.admin_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown administrative type code", EXPFILL}},
@@ -1207,6 +1211,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 
     bp_bundle_t *bundle = bp_bundle_new();
     bundle->frame_num = pinfo->num;
+    bundle->frame_time = pinfo->abs_ts;
 
     // Read blocks directly from buffer with same addresses as #tvb
     const guint buflen = tvb_captured_length(tvb);
@@ -1515,6 +1520,11 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     if (subj_found) {
         proto_item *item_subj_ref = proto_tree_add_uint(tree_status, hf_status_rep_subj_ref, tvb, 0, 0, subj_found->frame_num);
         PROTO_ITEM_SET_GENERATED(item_subj_ref);
+
+        nstime_t td;
+        nstime_delta(&td, &(context->bundle->frame_time), &(subj_found->frame_time));
+        proto_item *item_td = proto_tree_add_time(tree_status, hf_status_time_diff, tvb, 0, 0, &td);
+        PROTO_ITEM_SET_GENERATED(item_td);
     }
     bp_bundle_ident_delete(subj);
 
@@ -1619,28 +1629,39 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
 
             //FIXME: handle size overflows
             const guint32 frag_offset = *(bundle->primary->frag_offset);
-            const gboolean more_frags = (
-                *(bundle->primary->frag_offset) + payload_len
-                < *(bundle->primary->total_len)
-            );
+            const guint32 total_len = *(bundle->primary->total_len);
 
-            const void *data_load = tvb_memdup(wmem_file_scope(), tvb, 0, payload_len);
-            fragment_head *payload_frag_msg = fragment_add(
-                    &bp_reassembly_table,
-                    tvb, 0, pinfo,
-                    corr_id,
-                    data_load,
-                    frag_offset,
-                    payload_len,
-                    more_frags
+            fragment_head *payload_frag_msg = fragment_add_check(
+                &bp_reassembly_table,
+                tvb, 0,
+                pinfo, corr_id, NULL,
+                frag_offset,
+                payload_len,
+                TRUE
             );
+            const guint32 old_total_len = fragment_get_tot_len(
+                &bp_reassembly_table,
+                pinfo, corr_id, NULL
+            );
+            if (old_total_len > 0) {
+                if (total_len != old_total_len) {
+                    expert_add_info(pinfo, bundle->primary->item_block, &ei_fragment_tot_mismatch);
+                }
+            }
+            else {
+                fragment_set_tot_len(
+                    &bp_reassembly_table,
+                    pinfo, corr_id, NULL,
+                    total_len
+                );
+            }
             tvb_payload = process_reassembled_data(
-                    tvb, 0, pinfo,
-                    "Reassembled Payload",
-                    payload_frag_msg,
-                    &payload_frag_items,
-                    NULL,
-                    tree_bundle
+                tvb, 0, pinfo,
+                "Reassembled Payload",
+                payload_frag_msg,
+                &payload_frag_items,
+                NULL,
+                tree_bundle
             );
         }
     }

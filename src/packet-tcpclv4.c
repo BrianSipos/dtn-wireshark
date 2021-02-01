@@ -1277,12 +1277,11 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
                     }
                     else {
                         // Reassemble the segments
-                        const void *data_load = tvb_memdup(wmem_packet_scope(), tvb, data_offset, data_len);
                         fragment_head *xferload_frag_msg = fragment_add_seq_next(
                                 &tcpcl_reassembly_table,
-                                tvb, data_offset, pinfo,
-                                corr_id,
-                                data_load, data_len,
+                                tvb, data_offset,
+                                pinfo, corr_id, NULL,
+                                data_len,
                                 !(flags & TCPCL_TRANSFER_FLAG_END)
                         );
                         xferload_tvb = process_reassembled_data(

@@ -230,6 +230,8 @@ void bp_block_canonical_delete(gpointer ptr);
 typedef struct {
     /// Index of the frame
     guint32 frame_num;
+    /// Timestamp on the frame (end time if reassembled)
+    nstime_t frame_time;
     /// Required primary block
     bp_block_primary_t *primary;
     /// Additional blocks in order (type bp_block_canonical_t)
