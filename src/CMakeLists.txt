@@ -10,6 +10,7 @@ add_library(
     packet-udpcl.c
 )
 target_link_libraries(udpcl PUBLIC PkgConfig::WIRESHARK)
+target_link_libraries(udpcl PRIVATE bpv7)
 
 add_library(
     bpv7 SHARED

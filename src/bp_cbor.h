@@ -71,7 +71,8 @@ typedef struct {
     /// Additional blocks in order (type gint64)
     GSequence *tags;
 
-    /// Major type of this block
+    /// Major type of this block.
+    /// This will be one of the cbor_type values.
     cbor_type type_major;
     /// Minor type of this item
     guint8 type_minor;
@@ -163,11 +164,18 @@ guint64 * cbor_require_uint64(const bp_cbor_chunk_t *chunk);
  * @note This reader will clip the most significant bit of the value.
  *
  * @param chunk The chunk to read from.
- * @return Pointer to the boolean value, if the item was an integer.
+ * @return Pointer to the value, if the item was an integer.
  * The value can be deleted with bp_cbor_require_delete().
  */
 gint64 * cbor_require_int64(const bp_cbor_chunk_t *chunk);
 
+/** Require a CBOR item to have a text- or byte-string value.
+ *
+ * @param parent The containing buffer.
+ * @param chunk The chunk to read size from.
+ * @return Pointer to the value, if the item was an string.
+ * The value is memory managed by wireshark.
+ */
 tvbuff_t * cbor_require_string(tvbuff_t *parent, const bp_cbor_chunk_t *chunk);
 
 /** Function to match the GDestroyNotify signature.

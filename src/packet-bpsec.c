@@ -107,7 +107,7 @@ bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 typ
         obj = wmem_new(alloc, bpsec_id_t);
     }
     else {
-        obj = g_malloc(sizeof(bpsec_id_t));
+        obj = g_new(bpsec_id_t, 1);
     }
     obj->context_id = context_id;
     obj->type_id = type_id;

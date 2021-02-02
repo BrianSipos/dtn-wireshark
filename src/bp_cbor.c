@@ -192,7 +192,7 @@ gboolean cbor_skip_next_item(tvbuff_t *tvb, gint *offset) {
             }
             else {
                 const gint64 count = chunk->head_value;
-                for (int ix = 0; ix < count; ++ix) {
+                for (gint64 ix = 0; ix < count; ++ix) {
                     cbor_skip_next_item(tvb, offset);
                 }
             }
@@ -205,7 +205,7 @@ gboolean cbor_skip_next_item(tvbuff_t *tvb, gint *offset) {
             }
             else {
                 const gint64 count = 2 * chunk->head_value;
-                for (int ix = 0; ix < count; ++ix) {
+                for (gint64 ix = 0; ix < count; ++ix) {
                     cbor_skip_next_item(tvb, offset);
                 }
             }

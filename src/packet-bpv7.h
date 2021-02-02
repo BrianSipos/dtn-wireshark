@@ -292,7 +292,7 @@ guint bp_bundle_ident_hash(gconstpointer key);
  */
 proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_eid_t *eid);
 
-/// Metadata for an entire conversation
+/// Metadata for an entire file
 typedef struct {
     /// Map from a bundle ID (bp_bundle_ident_t) to bundle (bp_bundle_t)
     GHashTable *bundles;

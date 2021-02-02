@@ -402,6 +402,7 @@ static expert_field ei_block_num_dupe = EI_INIT;
 static expert_field ei_block_payload_index = EI_INIT;
 static expert_field ei_block_payload_num = EI_INIT;
 static expert_field ei_block_is_fragment = EI_INIT;
+static expert_field ei_fragment_reassemble_size = EI_INIT;
 static expert_field ei_fragment_tot_mismatch = EI_INIT;
 static expert_field ei_block_sec_bib_tgt = EI_INIT;
 static expert_field ei_block_sec_bcb_tgt = EI_INIT;
@@ -418,7 +419,8 @@ static ei_register_info expertitems[] = {
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
     {&ei_block_payload_num, {"bpv7.block_payload_num", PI_PROTOCOL, PI_WARN, "Invalid payload block number", EXPFILL}},
     {&ei_block_is_fragment, {"bpv7.block_is_fragment", PI_PROTOCOL, PI_NOTE, "Invalid payload block number", EXPFILL}},
-    {&ei_fragment_tot_mismatch, {"bpv7.fragment_tot_mismatch", PI_PROTOCOL, PI_ERROR, "Inconsistent total length between fragments", EXPFILL}},
+    {&ei_fragment_reassemble_size, {"bpv7.fragment_reassemble_size", PI_REASSEMBLE, PI_ERROR, "Cannot defragment this size (wireshark limitation)", EXPFILL}},
+    {&ei_fragment_tot_mismatch, {"bpv7.fragment_tot_mismatch", PI_REASSEMBLE, PI_ERROR, "Inconsistent total length between fragments", EXPFILL}},
     {&ei_block_sec_bib_tgt, {"bpv7.bpsec.bib_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is an integrity target", EXPFILL}},
     {&ei_block_sec_bcb_tgt, {"bpv7.bpsec.bcb_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is a confidentiality target", EXPFILL}},
     {&ei_admin_type_unknown, {"bpv7.admin_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown administrative type code", EXPFILL}},
@@ -1623,46 +1625,49 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
                 NULL,
                 NULL
             );
-            // wireshark fragment set IDs are 32-bits only
-            const guint32 corr_id = bp_bundle_ident_hash(corr_ident);
-            bp_bundle_ident_delete(corr_ident);
 
-            //FIXME: handle size overflows
             const guint32 frag_offset = *(bundle->primary->frag_offset);
             const guint32 total_len = *(bundle->primary->total_len);
-
-            fragment_head *payload_frag_msg = fragment_add_check(
-                &bp_reassembly_table,
-                tvb, 0,
-                pinfo, corr_id, NULL,
-                frag_offset,
-                payload_len,
-                TRUE
-            );
-            const guint32 old_total_len = fragment_get_tot_len(
-                &bp_reassembly_table,
-                pinfo, corr_id, NULL
-            );
-            if (old_total_len > 0) {
-                if (total_len != old_total_len) {
-                    expert_add_info(pinfo, bundle->primary->item_block, &ei_fragment_tot_mismatch);
-                }
+            if (
+                (frag_offset != *(bundle->primary->frag_offset))
+                || (total_len != *(bundle->primary->total_len))) {
+                expert_add_info(pinfo, bundle->primary->item_block, &ei_fragment_reassemble_size);
             }
             else {
-                fragment_set_tot_len(
+                fragment_head *payload_frag_msg = fragment_add_check(
                     &bp_reassembly_table,
-                    pinfo, corr_id, NULL,
-                    total_len
+                    tvb, 0,
+                    pinfo, 0, corr_ident,
+                    frag_offset,
+                    payload_len,
+                    TRUE
+                );
+                const guint32 old_total_len = fragment_get_tot_len(
+                    &bp_reassembly_table,
+                    pinfo, 0, corr_ident
+                );
+                if (old_total_len > 0) {
+                    if (total_len != old_total_len) {
+                        expert_add_info(pinfo, bundle->primary->item_block, &ei_fragment_tot_mismatch);
+                    }
+                }
+                else {
+                    fragment_set_tot_len(
+                        &bp_reassembly_table,
+                        pinfo, 0, corr_ident,
+                        total_len
+                    );
+                }
+                tvb_payload = process_reassembled_data(
+                    tvb, 0, pinfo,
+                    "Reassembled Payload",
+                    payload_frag_msg,
+                    &payload_frag_items,
+                    NULL,
+                    tree_bundle
                 );
             }
-            tvb_payload = process_reassembled_data(
-                tvb, 0, pinfo,
-                "Reassembled Payload",
-                payload_frag_msg,
-                &payload_frag_items,
-                NULL,
-                tree_bundle
-            );
+            bp_bundle_ident_delete(corr_ident);
         }
     }
     else {
@@ -1757,6 +1762,60 @@ static void history_cleanup(void) {
 static void reinit_bp(void) {
 }
 
+
+static gpointer fragment_bundle_ident_temporary_key(
+        const packet_info *pinfo _U_, const guint32 id _U_, const void *data) {
+    return (bp_bundle_ident_t *)data;
+}
+static gpointer fragment_bundle_ident_persistent_key(
+        const packet_info *pinfo _U_, const guint32 id _U_, const void *data) {
+    const bp_bundle_ident_t *ident = (const bp_bundle_ident_t *)data;
+
+    bp_bundle_ident_t *key = g_slice_new0(bp_bundle_ident_t);
+
+    if (ident->src) {
+        key->src = g_slice_new(bp_eid_t);
+        key->src->scheme = ident->src->scheme;
+        key->src->uri = g_strdup(ident->src->uri);
+    }
+    if (ident->ts) {
+        key->ts = g_slice_new(bp_creation_ts_t);
+        key->ts->time = ident->ts->time;
+        key->ts->seqno = ident->ts->seqno;
+    }
+    if (ident->frag_offset) {
+        key->frag_offset = g_slice_new(guint64);
+        key->frag_offset = ident->frag_offset;
+    }
+    if (ident->total_len) {
+        key->total_len = g_slice_new(guint64);
+        key->total_len = ident->total_len;
+    }
+    return key;
+}
+static void fragment_bundle_ident_free_temporary_key(gpointer ptr _U_) {}
+static void fragment_bundle_ident_free_persistent_key(gpointer ptr) {
+    bp_bundle_ident_t *key = (bp_bundle_ident_t *)ptr;
+
+    if (key->src) {
+        g_free((char *)key->src->uri);
+        g_slice_free(bp_eid_t, key->src);
+    }
+    g_slice_free(bp_creation_ts_t, key->ts);
+    g_slice_free(guint64, key->frag_offset);
+    g_slice_free(guint64, key->total_len);
+
+    g_slice_free(bp_bundle_ident_t, key);
+}
+static const reassembly_table_functions bundle_reassembly_table_functions = {
+    bp_bundle_ident_hash,
+    bp_bundle_ident_equal,
+    fragment_bundle_ident_temporary_key,
+    fragment_bundle_ident_persistent_key,
+    fragment_bundle_ident_free_temporary_key,
+    fragment_bundle_ident_free_persistent_key
+};
+
 /// Overall registration of the protocol
 static void proto_register_bp(void) {
     proto_bp = proto_register_protocol(
@@ -1797,7 +1856,7 @@ static void proto_register_bp(void) {
 
     reassembly_table_register(
         &bp_reassembly_table,
-        &addresses_reassembly_table_functions
+        &bundle_reassembly_table_functions
     );
 }
 
