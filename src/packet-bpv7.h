@@ -133,6 +133,13 @@ typedef struct {
     gint64 scheme;
     /// Derived URI text
     const char *uri;
+
+    /// Optional DTN well-known SSP
+    const char *dtn_wkssp;
+    /// Optional URI authority part
+//    const char *node_name;
+    /// Optional DTN service name
+    const char *dtn_serv;
 } bp_eid_t;
 
 /** Construct a new timestamp.
@@ -254,8 +261,8 @@ void bp_bundle_delete(gpointer ptr);
 
 /// Identification of an individual bundle
 typedef struct {
-    /// Pointer to an external Source Node ID
-    bp_eid_t *src;
+    /// Normalized EID URI for the Source Node ID
+    const char *src;
     /// Pointer to an external Creation Timestamp
     bp_creation_ts_t *ts;
     /// Pointer to external optional fragment start offset

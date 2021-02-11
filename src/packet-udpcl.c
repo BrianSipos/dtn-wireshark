@@ -5,7 +5,8 @@
 #include <epan/expert.h>
 #include <epan/reassemble.h>
 #include <epan/tvbuff-int.h>
-#include <epan/dissectors/packet-tcp.h>
+#include <epan/dissectors/packet-udp.h>
+#include <epan/dissectors/packet-dtls.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include "bp_cbor.h"
@@ -13,8 +14,14 @@
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
+#include <epan/dissectors/packet-tls.h>
+#include <epan/dissectors/packet-tls-utils.h>
+#define DTLS_DISSECTOR_NAME "dtls"
 #else
 #include <config.h>
+#include <epan/dissectors/packet-ssl.h>
+#include <epan/dissectors/packet-ssl-utils.h>
+#define DTLS_DISSECTOR_NAME "dtls"
 #define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
 #endif
@@ -32,6 +39,7 @@ const char *const proto_name_udpcl = "UDPCL";
 
 /// Protocol preferences and defaults
 static const guint UDPCL_PORT_NUM = 4556;
+static gboolean udpcl_desegment_transfer = TRUE;
 static gboolean udpcl_decode_bundle = TRUE;
 
 /// Protocol handles
@@ -39,6 +47,7 @@ static int proto_udpcl = -1;
 
 /// Dissector handles
 static dissector_handle_t handle_udpcl = NULL;
+static dissector_handle_t handle_dtls = NULL;
 static dissector_handle_t handle_bpv6 = NULL;
 static dissector_handle_t handle_bpv7 = NULL;
 
@@ -48,9 +57,16 @@ static dissector_table_t dissect_media = NULL;
 /// Fragment reassembly
 static reassembly_table udpcl_reassembly_table;
 
+const unit_name_string units_item_items = { " item", " items" };
+
 static int hf_udpcl = -1;
-static int hf_padding = -1;
-static int hf_ctrl = -1;
+static int hf_keepalive = -1;
+static int hf_ext_map = -1;
+static int hf_ext_id = -1;
+static int hf_ext_nodeid = -1;
+static int hf_ext_xfer = -1;
+static int hf_ext_starttls = -1;
+
 static int hf_xfer_id = -1;
 static int hf_xfer_frag_offset = -1;
 static int hf_xfer_total_length = -1;
@@ -72,13 +88,19 @@ static gint ett_xferload_fragments = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_udpcl, {"UDP Convergence Layer", "udpcl", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_padding, {"Padding", "udpcl.padding", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_ctrl, {"Control", "udpcl.control", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_xfer_id, {"Transfer ID", "udpcl.xfer.id", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_xfer_frag_offset, {"Fragment Offset", "udpcl.xfer.frag_offset", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
-    {&hf_xfer_total_length, {"Transfer Length", "udpcl.xfer.total_len", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
-    {&hf_xfer_data, {"Transfer Data", "udpcl.xfer.data", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_udpcl, {"DTN UDP Convergence Layer", "udpcl", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_keepalive, {"Keepalive", "udpcl.keepalive", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_ext_map, {"Extension Map", "udpcl.ext", FT_INT64, BASE_DEC | BASE_UNIT_STRING, &units_item_items, 0x0, NULL, HFILL}},
+    {&hf_ext_id, {"Extension ID", "udpcl.ext.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+
+    {&hf_ext_nodeid, {"Node ID", "udpcl.ext.nodeid", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_ext_xfer, {"Transfer", "udpcl.ext.xfer", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_ext_starttls, {"STARTTLS", "udpcl.ext.starttls", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+
+    {&hf_xfer_id, {"Transfer ID", "udpcl.ext.xfer.id", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_xfer_total_length, {"Transfer Length", "udpcl.ext.xfer.total_len", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
+    {&hf_xfer_frag_offset, {"Fragment Offset", "udpcl.ext.xfer.frag_offset", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
+    {&hf_xfer_data, {"Fragment Data", "udpcl.ext.xfer.data", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_xferload_fragments,
         {"Transfer fragments", "udpcl.xferload.fragments",
@@ -139,24 +161,30 @@ static const fragment_items xferload_frag_items = {
 };
 
 static int ett_udpcl = -1;
-static int ett_ctrl = -1;
+static int ett_ext_map = -1;
+static int ett_ext_item = -1;
+static int ett_ext_xfer = -1;
 /// Tree structures
 static int *ett[] = {
     &ett_udpcl,
-    &ett_ctrl,
+    &ett_ext_map,
+    &ett_ext_item,
+    &ett_ext_xfer,
     &ett_xferload_fragment,
     &ett_xferload_fragments,
 };
 
-static expert_field ei_pad_nonzero = EI_INIT;
-static expert_field ei_pad_size = EI_INIT;
+static expert_field ei_ka_nonzero = EI_INIT;
+static expert_field ei_ka_size = EI_INIT;
+static expert_field ei_ext_key_unknown = EI_INIT;
 static expert_field ei_transfer_id_size = EI_INIT;
 static expert_field ei_fragment_reassemble_size = EI_INIT;
 static expert_field ei_fragment_tot_mismatch = EI_INIT;
 static expert_field ei_non_bundle_data = EI_INIT;
 static ei_register_info expertitems[] = {
-    {&ei_pad_nonzero, { "udpcl.padding.nonzero", PI_MALFORMED, PI_WARN, "Padding has non-zero octet", EXPFILL}},
-    {&ei_pad_size, { "udpcl.padding.size", PI_MALFORMED, PI_WARN, "Padding has size other than 4", EXPFILL}},
+    {&ei_ka_nonzero, { "udpcl.keepalive.nonzero", PI_MALFORMED, PI_WARN, "Keepalive has non-zero octet", EXPFILL}},
+    {&ei_ka_size, { "udpcl.keepalive.size", PI_MALFORMED, PI_WARN, "Keepalive has size other than 4", EXPFILL}},
+    {&ei_ext_key_unknown, {"bpv7.ext_key_unknown", PI_UNDECODED, PI_WARN, "Unknown extension key code", EXPFILL}},
     {&ei_transfer_id_size, {"udpcl.transfer_id_size", PI_REASSEMBLE, PI_ERROR, "Cannot defragment this Transfer ID (wireshark limitation)", EXPFILL}},
     {&ei_fragment_reassemble_size, {"udpcl.fragment_reassemble_size", PI_REASSEMBLE, PI_ERROR, "Cannot defragment this size (wireshark limitation)", EXPFILL}},
     {&ei_fragment_tot_mismatch, {"udpcl.fragment_tot_mismatch", PI_REASSEMBLE, PI_ERROR, "Inconsistent total length between fragments", EXPFILL}},
@@ -166,12 +194,16 @@ static ei_register_info expertitems[] = {
 /** Dissect pure bundle data.
  * This may contain either BPv6 or BPv7.
  */
-static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
+static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_udpcl) {
     gint sublen = 0;
+    proto_item *item_udpcl = proto_tree_get_parent(tree_udpcl);
+    proto_item *tree = proto_tree_get_root(tree_udpcl);
+
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
     bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, 0);
     if (first_octet == 0x06) {
-        col_append_str(pinfo->cinfo, COL_INFO, " [Bundle v6]");
+        col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle v6");
+        proto_item_append_text(item_udpcl, ", Bundle v6");
         if (udpcl_decode_bundle) {
             if (handle_bpv6) {
                 sublen = call_dissector(
@@ -184,7 +216,8 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
         }
     }
     else if (first_head->type_major == CBOR_TYPE_ARRAY) {
-        col_append_str(pinfo->cinfo, COL_INFO, " [Bundle v7]");
+        col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle v7");
+        proto_item_append_text(item_udpcl, ", Bundle v7");
         if (udpcl_decode_bundle) {
             if (handle_bpv7) {
                 sublen = call_dissector(
@@ -209,10 +242,123 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
         }
     }
     else {
-        expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_non_bundle_data);
+        col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Non-bundle data");
+        proto_item_append_text(item_udpcl, ", Non-bundle data");
+        expert_add_info(pinfo, item_udpcl, &ei_non_bundle_data);
     }
     bp_cbor_chunk_delete(first_head);
     return sublen;
+}
+
+/// Dissect transfer extension item
+static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ext_item, int offset) {
+    col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Transfer");
+
+    proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, 0, ENC_NA);
+    proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
+    gint init_offset = offset;
+
+    bp_cbor_chunk_t *chunk_xfer = cbor_require_array_with_size(tvb, pinfo, item_xfer, &offset, 4, 4);
+    if (!chunk_xfer) {
+        proto_item_set_len(item_xfer, offset - init_offset);
+        return offset - init_offset;
+    }
+
+    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
+    offset += chunk->data_length;
+    guint64 *xfer_id = cbor_require_uint64(chunk);
+    proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_id, pinfo, tvb, chunk, xfer_id);
+    bp_cbor_chunk_delete(chunk);
+
+    chunk = bp_scan_cbor_chunk(tvb, offset);
+    offset += chunk->data_length;
+    guint64 *xfer_tot_len = cbor_require_uint64(chunk);
+    proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
+    bp_cbor_chunk_delete(chunk);
+
+    chunk = bp_scan_cbor_chunk(tvb, offset);
+    offset += chunk->data_length;
+    guint64 *xfer_frag_offset = cbor_require_uint64(chunk);
+    proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
+    bp_cbor_chunk_delete(chunk);
+
+    chunk = bp_scan_cbor_chunk(tvb, offset);
+    offset += chunk->data_length;
+    tvbuff_t *xfer_fragment = cbor_require_string(tvb, chunk);
+    proto_tree_add_cbor_string(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
+    bp_cbor_chunk_delete(chunk);
+
+    if (udpcl_desegment_transfer
+        && xfer_id && xfer_tot_len && xfer_frag_offset && xfer_fragment) {
+        proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
+        proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);
+        proto_item *item_udpcl = proto_tree_get_parent(tree_udpcl);
+
+        proto_item_append_text(item_udpcl, ", Transfer (ID: %" PRId64 ", Fragment offset: %" PRId64 ")", *xfer_id, *xfer_frag_offset);
+
+        const guint32 corr_id = *xfer_id;
+        const gboolean overflow_corr_id = (
+            (corr_id != *xfer_id)
+        );
+        if (overflow_corr_id) {
+            expert_add_info(pinfo, item_udpcl, &ei_transfer_id_size);
+        }
+
+        const guint32 frag_offset = *(xfer_frag_offset);
+        const guint32 total_len = *(xfer_tot_len);
+        const gboolean overflow_frag_size = (
+            (frag_offset != *(xfer_frag_offset))
+            || (total_len != *(xfer_tot_len))
+        );
+        if (overflow_frag_size) {
+            expert_add_info(pinfo, item_udpcl, &ei_fragment_reassemble_size);
+        }
+
+        if (!overflow_corr_id && !overflow_frag_size) {
+            fragment_head *payload_frag_msg = fragment_add_check(
+                &udpcl_reassembly_table,
+                xfer_fragment, 0,
+                pinfo, corr_id, NULL,
+                frag_offset,
+                tvb_captured_length(xfer_fragment),
+                TRUE
+            );
+            const guint32 old_total_len = fragment_get_tot_len(
+                &udpcl_reassembly_table,
+                pinfo, corr_id, NULL
+            );
+            if (old_total_len > 0) {
+                if (total_len != old_total_len) {
+                    expert_add_info(pinfo, item_xfer, &ei_fragment_tot_mismatch);
+                }
+            }
+            else {
+                fragment_set_tot_len(
+                    &udpcl_reassembly_table,
+                    pinfo, corr_id, NULL,
+                    total_len
+                );
+            }
+            tvbuff_t *tvb_bundle = process_reassembled_data(
+                tvb, 0, pinfo,
+                "Reassembled Transfer",
+                payload_frag_msg,
+                &xferload_frag_items,
+                NULL,
+                tree_udpcl
+            );
+            if (tvb_bundle) {
+                col_append_str(pinfo->cinfo, COL_INFO, " (reassembled)");
+                dissect_bundle(tvb_bundle, pinfo, tree_udpcl);
+            }
+            else {
+                col_append_str(pinfo->cinfo, COL_INFO, " (fragment)");
+            }
+        }
+    }
+
+    proto_item_set_len(item_xfer, offset - init_offset);
+    return offset - init_offset;
 }
 
 /// Top-level protocol dissector
@@ -230,153 +376,100 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
     proto_item *item_udpcl = proto_tree_add_item(tree, hf_udpcl, tvb, 0, 0, ENC_NA);
     proto_tree *tree_udpcl = proto_item_add_subtree(item_udpcl, ett_udpcl);
 
-    col_append_str(pinfo->cinfo, COL_INFO, "UDPCL");
-
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
     bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, 0);
     if (first_octet == 0x00) {
-        proto_item_append_text(item_udpcl, ", Padding");
+        col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Keepalive");
+        proto_item_append_text(item_udpcl, ", Keepalive");
 
-        proto_item *item_pad = proto_tree_add_item(tree_udpcl, hf_padding, tvb, 0, buflen, ENC_NA);
+        proto_item *item_ka = proto_tree_add_item(tree_udpcl, hf_keepalive, tvb, 0, buflen, ENC_NA);
         if (buflen != 4) {
-            expert_add_info(pinfo, item_pad, &ei_pad_size);
+            expert_add_info(pinfo, item_ka, &ei_ka_size);
         }
         for (guint ix = 1; ix < buflen; ++ix) {
             if (tvb_get_guint8(tvb, ix) != 0x0) {
-                expert_add_info(pinfo, item_pad, &ei_pad_nonzero);
+                expert_add_info(pinfo, item_ka, &ei_ka_nonzero);
                 break;
             }
         }
         caplen = buflen;
         proto_item_set_len(item_udpcl, caplen);
     }
+    else if (first_octet == SSL_ID_HANDSHAKE) {
+        g_log(LOG_DOMAIN, G_LOG_LEVEL_WARNING, "Unexpected DTLS in frame %d\n", pinfo->num);
+        ssl_starttls_post_ack(handle_dtls, pinfo, handle_udpcl);
+    }
     else if (first_head->type_major == CBOR_TYPE_MAP) {
-        proto_item_append_text(item_udpcl, ", Control Data");
+        col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Extension Map");
+        proto_item_append_text(item_udpcl, ", Extension Map");
         gint offset = 1;
 
-        proto_item *item_ctrl = proto_tree_add_item(tree_udpcl, hf_ctrl, tvb, 0, 0, ENC_NA);
-        proto_tree *tree_ctrl = proto_item_add_subtree(item_ctrl, ett_ctrl);
+        const gint64 count = first_head->head_value;
+        proto_item *item_ext_map = proto_tree_add_cbor_int64(tree_udpcl, hf_ext_map, pinfo, tvb, first_head, &count);
+        proto_tree *tree_ext_map = proto_item_add_subtree(item_ext_map, ett_ext_map);
 
-        guint64 *xfer_id = NULL;
-        guint64 *xfer_frag_offset = NULL;
-        guint64 *xfer_tot_len = NULL;
-        tvbuff_t *xfer_fragment = NULL;
-
-        const gint64 count = 2 * first_head->head_value;
         for (gint64 ix = 0; ix < count; ++ix) {
             bp_cbor_chunk_t *key_chunk = bp_scan_cbor_chunk(tvb, offset);
             offset += key_chunk->data_length;
             gint64 *key = cbor_require_int64(key_chunk);
+            proto_item *item_ext_item = proto_tree_add_cbor_int64(tree_ext_map, hf_ext_id, pinfo, tvb, key_chunk, key);
+            proto_tree *tree_ext_item = proto_item_add_subtree(item_ext_item, ett_ext_item);
             bp_cbor_chunk_delete(key_chunk);
 
+            if (!key) {
+                cbor_skip_next_item(tvb, &offset);
+                continue;
+            }
             switch (*key) {
-                case UDPCL_CTRL_XFER_ID: {
+                case UDPCL_EXT_NODEID: {
                     bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
                     offset += chunk->data_length;
-                    xfer_id = cbor_require_uint64(chunk);
-                    proto_tree_add_cbor_uint64(tree_ctrl, hf_xfer_id, pinfo, tvb, chunk, xfer_id);
+                    //tvbuff_t *nodeid = cbor_require_string(tvb, chunk);
+                    proto_tree_add_cbor_string(tree_ext_item, hf_ext_nodeid, pinfo, tvb, chunk);
                     bp_cbor_chunk_delete(chunk);
                     break;
                 }
-                case UDPCL_CTRL_XFER_LEN: {
-                    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-                    offset += chunk->data_length;
-                    xfer_tot_len = cbor_require_uint64(chunk);
-                    proto_tree_add_cbor_uint64(tree_ctrl, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
-                    bp_cbor_chunk_delete(chunk);
+                case UDPCL_EXT_TRANSFER: {
+                    offset += dissect_transfer(tvb, pinfo, tree_ext_item, offset);
                     break;
                 }
-                case UDPCL_CTRL_XFER_FRAG_OFFSET: {
-                    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-                    offset += chunk->data_length;
-                    xfer_frag_offset = cbor_require_uint64(chunk);
-                    proto_tree_add_cbor_uint64(tree_ctrl, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
-                    bp_cbor_chunk_delete(chunk);
-                    break;
-                }
-                case UDPCL_CTRL_XFER_FRAG_DATA: {
-                    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-                    offset += chunk->data_length;
-                    xfer_fragment = cbor_require_string(tvb, chunk);
-//                    proto_tree_add_cbor_string(tree_ctrl, hf_xfer_data, pinfo, xfer_fragment, chunk);
-                    bp_cbor_chunk_delete(chunk);
-                    break;
-                }
-                default:
+                case UDPCL_EXT_STARTTLS: {
+                    guint init_offset = offset;
                     cbor_skip_next_item(tvb, &offset);
+                    // no real value
+                    proto_tree_add_item(tree_ext_item, hf_ext_starttls, tvb, init_offset, offset - init_offset, ENC_NA);
+
+                    col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "STARTTLS");
+                    ssl_starttls_ack(handle_dtls, pinfo, handle_udpcl);
                     break;
+                }
+                default: {
+                    guint init_offset = offset;
+                    cbor_skip_next_item(tvb, &offset);
+                    expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
+
+                    tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);
+                    offset += dissector_try_string(
+                        dissect_media,
+                        "application/cbor",
+                        tvb_item,
+                        pinfo,
+                        tree_ext_item,
+                        NULL
+                    );
+                    break;
+                }
             }
             bp_cbor_require_delete(key);
         }
-        proto_item_set_len(item_ctrl, offset);
+        proto_item_set_len(item_ext_map, offset);
 
         caplen = offset;
         proto_item_set_len(item_udpcl, caplen);
-
-        if (xfer_id && xfer_tot_len && xfer_frag_offset) {
-            proto_item_append_text(item_udpcl, ", Transfer ID: %" PRId64 ", Fragment offset: %" PRId64, *xfer_id, *xfer_frag_offset);
-
-            const guint32 corr_id = *xfer_id;
-            const gboolean overflow_corr_id = (
-                (corr_id != *xfer_id)
-            );
-            if (overflow_corr_id) {
-                expert_add_info(pinfo, item_udpcl, &ei_transfer_id_size);
-            }
-
-            const guint32 frag_offset = *(xfer_frag_offset);
-            const guint32 total_len = *(xfer_tot_len);
-            const gboolean overflow_frag_size = (
-                (frag_offset != *(xfer_frag_offset))
-                || (total_len != *(xfer_tot_len))
-            );
-            if (overflow_frag_size) {
-                expert_add_info(pinfo, item_udpcl, &ei_fragment_reassemble_size);
-            }
-
-            if (!overflow_corr_id && !overflow_frag_size) {
-                fragment_head *payload_frag_msg = fragment_add_check(
-                    &udpcl_reassembly_table,
-                    xfer_fragment, 0,
-                    pinfo, corr_id, NULL,
-                    frag_offset,
-                    tvb_captured_length(xfer_fragment),
-                    TRUE
-                );
-                const guint32 old_total_len = fragment_get_tot_len(
-                    &udpcl_reassembly_table,
-                    pinfo, corr_id, NULL
-                );
-                if (old_total_len > 0) {
-                    if (total_len != old_total_len) {
-                        expert_add_info(pinfo, item_ctrl, &ei_fragment_tot_mismatch);
-                    }
-                }
-                else {
-                    fragment_set_tot_len(
-                        &udpcl_reassembly_table,
-                        pinfo, corr_id, NULL,
-                        total_len
-                    );
-                }
-                tvbuff_t *tvb_bundle = process_reassembled_data(
-                    tvb, 0, pinfo,
-                    "Reassembled Transfer",
-                    payload_frag_msg,
-                    &xferload_frag_items,
-                    NULL,
-                    tree_udpcl
-                );
-                if (tvb_bundle) {
-                    dissect_bundle(tvb_bundle, pinfo, tree);
-                }
-            }
-        }
     }
     else {
-        proto_item_append_text(item_udpcl, ", Bundle Data");
         // Captured data but not part of item_udpcl
-        caplen = dissect_bundle(tvb, pinfo, tree);
+        caplen = dissect_bundle(tvb, pinfo, tree_udpcl);
     }
     bp_cbor_chunk_delete(first_head);
 
@@ -399,7 +492,7 @@ static void reinit_udpcl(void) {
 static void proto_register_udpcl(void) {
     g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_register_udpcl()\n");
     proto_udpcl = proto_register_protocol(
-        "DTN UDP Convergence Layer Protocol", /* name */
+        "DTN UDP Convergence Layer", /* name */
         "UDPCL", /* short name */
         "udpcl" /* abbrev */
     );
@@ -414,6 +507,14 @@ static void proto_register_udpcl(void) {
     handle_udpcl = register_dissector("udpcl", dissect_udpcl, proto_udpcl);
 
     module_t *module_udpcl = prefs_register_protocol(proto_udpcl, reinit_udpcl);
+    prefs_register_bool_preference(
+        module_udpcl,
+        "desegment_transfer",
+        "Reassemble the segments of each transfer",
+        "Whether the UDPCL dissector should combine the fragments "
+        "of a transfer into the full bundle being transfered.",
+        &udpcl_desegment_transfer
+    );
     prefs_register_bool_preference(
         module_udpcl,
         "decode_bundle",
@@ -434,6 +535,7 @@ static void proto_reg_handoff_udpcl(void) {
     dissector_add_uint_with_preference("udp.port", UDPCL_PORT_NUM, handle_udpcl);
 
     dissect_media = find_dissector_table("media_type");
+    handle_dtls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_udpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_udpcl);
 
     reinit_udpcl();

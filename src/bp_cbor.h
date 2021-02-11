@@ -27,7 +27,7 @@ typedef struct {
     guint8 type_major;
     /// Minor type of this item
     guint8 type_minor;
-    /// Either the encoded value or zero (with one-bit truncation possible)
+    /// Either the encoded signed value or zero (with one-bit truncation possible)
     gint64 rawvalue;
 } bp_cbor_head_t;
 

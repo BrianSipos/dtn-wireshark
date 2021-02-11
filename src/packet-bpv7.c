@@ -6,6 +6,7 @@
 #include <epan/expert.h>
 #include <epan/to_str.h>
 #include <epan/reassemble.h>
+#include <epan/exceptions.h>
 #include <wsutil/crc16.h>
 #include <wsutil/crc32.h>
 #include <stdio.h>
@@ -25,6 +26,7 @@ const char *const proto_name_bp = "BPv7";
 /// Protocol preferences and defaults
 static gboolean bp_compute_crc = TRUE;
 static gboolean bp_reassemble_payload = TRUE;
+static gboolean bp_payload_try_heur = FALSE;
 
 /// Protocol handles
 static int proto_bp = -1;
@@ -35,7 +37,8 @@ static bp_history_t *bp_history = NULL;
 static dissector_table_t dissect_media = NULL;
 /// Extension sub-dissectors
 static dissector_table_t block_dissectors = NULL;
-static dissector_table_t payload_dissectors = NULL;
+static dissector_table_t payload_dissectors_dtn_wkssp = NULL;
+static dissector_table_t payload_dissectors_dtn_serv = NULL;
 static dissector_table_t admin_dissectors = NULL;
 
 /// Fragment reassembly
@@ -118,6 +121,8 @@ static int hf_eid_dtn_ssp_text = -1;
 static int hf_eid_ipn_node = -1;
 static int hf_eid_ipn_service = -1;
 static int hf_eid_as_uri = -1;
+static int hf_eid_dtn_wkssp = -1;
+static int hf_eid_dtn_serv = -1;
 
 static int hf_primary_version = -1;
 static int hf_primary_bundle_flags = -1;
@@ -195,7 +200,7 @@ static gint ett_payload_fragments = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_bundle, {"Bundle Protocol Version 7", "bpv7", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_bundle, {"DTN Bundle Protocol Version 7", "bpv7", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_head, {"Indefinite Array", "bpv7.bundle_head", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_break, {"Indefinite Break", "bpv7.bundle_break", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
@@ -216,6 +221,8 @@ static hf_register_info fields[] = {
     {&hf_eid_ipn_node, {"IPN Node Number", "bpv7.eid.ipn_node", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_eid_ipn_service, {"IPN Service Number", "bpv7.eid.ipn_service", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_eid_as_uri, {"Node ID as URI", "bpv7.eid.as_uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_eid_dtn_wkssp, {"Well-known SSP", "bpv7.eid.wkssp", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_eid_dtn_serv, {"Service Name", "bpv7.eid.serv", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_primary_version, {"Version", "bpv7.primary.version", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_bundle_flags, {"Bundle Flags", "bpv7.primary.bundle_flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
@@ -472,6 +479,9 @@ bp_eid_t * bp_eid_new() {
 void bp_eid_delete(gpointer ptr) {
     bp_eid_t *obj = (bp_eid_t *)ptr;
     file_scope_delete((char *)(obj->uri));
+    file_scope_delete((char *)(obj->dtn_wkssp));
+//    file_scope_delete((char *)(obj->node_name));
+    file_scope_delete((char *)(obj->dtn_serv));
     file_scope_delete(ptr);
 }
 
@@ -545,7 +555,7 @@ void bp_bundle_delete(gpointer ptr) {
 
 bp_bundle_ident_t * bp_bundle_ident_new(bp_eid_t *src, bp_creation_ts_t *ts, guint64 *off, guint64 *len) {
     bp_bundle_ident_t *ident = wmem_new(wmem_file_scope(), bp_bundle_ident_t);
-    ident->src = src;
+    ident->src = src ? g_strdup(src->uri) : NULL;
     ident->ts = ts;
     ident->frag_offset = off;
     ident->total_len = len;
@@ -553,6 +563,8 @@ bp_bundle_ident_t * bp_bundle_ident_new(bp_eid_t *src, bp_creation_ts_t *ts, gui
 }
 
 void bp_bundle_ident_delete(gpointer ptr) {
+    bp_bundle_ident_t *obj = (bp_bundle_ident_t *)ptr;
+    g_free((char *)(obj->src));
     file_scope_delete(ptr);
 }
 
@@ -571,7 +583,7 @@ gboolean bp_bundle_ident_equal(gconstpointer a, gconstpointer b) {
     const bp_bundle_ident_t *aobj = a;
     const bp_bundle_ident_t *bobj = b;
     return (
-        bp_eid_equal(aobj->src, bobj->src)
+        aobj->src && bobj->src && g_str_equal(aobj->src, bobj->src)
         && (aobj->ts->time.dtntime == bobj->ts->time.dtntime)
         && (aobj->ts->seqno == bobj->ts->seqno)
         && optional_uint64_equal(aobj->frag_offset, bobj->frag_offset)
@@ -582,7 +594,7 @@ gboolean bp_bundle_ident_equal(gconstpointer a, gconstpointer b) {
 guint bp_bundle_ident_hash(gconstpointer key) {
     const bp_bundle_ident_t *obj = key;
     return (
-        g_str_hash(obj->src->uri ? obj->src->uri : "")
+        g_str_hash(obj->src ? obj->src : "")
         ^ g_int64_hash(&(obj->ts->time.dtntime))
         ^ g_int64_hash(&(obj->ts->seqno))
     );
@@ -624,6 +636,8 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
     }
 
     wmem_strbuf_t *uribuf = wmem_strbuf_new(wmem_file_scope(), NULL);
+    const char *dtn_wkssp = NULL;
+    const char *dtn_serv = NULL;
     switch (*scheme) {
         case EID_SCHEME_DTN: {
             chunk = bp_scan_cbor_chunk(tvb, *offset);
@@ -634,26 +648,36 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
                     *offset += chunk->data_length;
 
                     switch (*ssp_code) {
-                        case 0: {
-                            wmem_strbuf_append(uribuf, "dtn:none");
+                        case 0:
+                            dtn_wkssp = wmem_strdup(wmem_file_scope(), "none");
                             break;
-                        }
-                        default: {
+                        default:
                             expert_add_info(pinfo, item, &ei_cbor_wrong_type);
                             break;
-                        }
+                    }
+                    if (dtn_wkssp) {
+                        wmem_strbuf_append_printf(uribuf, "dtn:%s", dtn_wkssp);
                     }
                     break;
                 }
                 case CBOR_TYPE_STRING: {
-                    tvbuff_t *ssp = cbor_require_string(tvb, chunk);
+                    tvbuff_t *ssp_str = cbor_require_string(tvb, chunk);
                     proto_tree_add_cbor_string(tree_eid, hf_eid_dtn_ssp_text, pinfo, tvb, chunk);
                     *offset += chunk->data_length;
 
-                    char *value = (char *) tvb_get_string_enc(wmem_packet_scope(), ssp, 0, tvb_captured_length(ssp), ENC_UTF_8);
-                    wmem_strbuf_append_printf(uribuf, "dtn:%s", value);
-                    wmem_free(wmem_packet_scope(), value);
+                    char *ssp = (char *) tvb_get_string_enc(wmem_packet_scope(), ssp_str, 0, tvb_captured_length(ssp_str), ENC_UTF_8);
+                    wmem_strbuf_append_printf(uribuf, "dtn:%s", ssp);
 
+                    char *path_sep;
+                    if ((path_sep = strrchr(ssp, '/')) != NULL) {
+                        dtn_serv = wmem_strdup(wmem_file_scope(), path_sep + 1);
+                    }
+                    else {
+                        // no separator also means no authority part, so it's well-known
+                        dtn_wkssp = wmem_strdup(wmem_file_scope(), ssp);
+                    }
+
+                    wmem_free(wmem_packet_scope(), ssp);
                     break;
                 }
                 default: {
@@ -697,7 +721,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
             break;
     }
 
-    char * uri = NULL;
+    char *uri = NULL;
     if (wmem_strbuf_get_len(uribuf) > 0) {
         uri = wmem_strbuf_finalize(uribuf);
 
@@ -710,12 +734,25 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
         file_scope_delete(uribuf);
     }
 
+    if (dtn_wkssp) {
+        proto_item *item = proto_tree_add_string(tree_eid, hf_eid_dtn_wkssp, tvb, eid_start, *offset - eid_start, dtn_wkssp);
+        PROTO_ITEM_SET_GENERATED(item);
+    }
+    if (dtn_serv) {
+        proto_item *item = proto_tree_add_string(tree_eid, hf_eid_dtn_serv, tvb, eid_start, *offset - eid_start, dtn_serv);
+        PROTO_ITEM_SET_GENERATED(item);
+    }
+
     if (eid) {
         eid->scheme = (scheme ? *scheme : 0);
         eid->uri = uri;
+        eid->dtn_wkssp = dtn_wkssp;
+        eid->dtn_serv = dtn_serv;
     }
     else {
         file_scope_delete(uri);
+        file_scope_delete((char *)dtn_wkssp);
+        file_scope_delete((char *)dtn_serv);
     }
 
     proto_item_set_len(item_eid, *offset - eid_start);
@@ -869,7 +906,7 @@ static void proto_tree_add_ident(proto_tree *tree, int hfindex, tvbuff_t *tvb, c
     wmem_strbuf_append_printf(
         ident_text,
         "Source: %s, DTN Time: %" PRIu64 ", Seq: %" PRIu64,
-        ident->src->uri,
+        ident->src,
         ident->ts->time.dtntime,
         ident->ts->seqno
     );
@@ -1198,12 +1235,55 @@ static void apply_bpsec_mark(const security_mark_t *sec, packet_info *pinfo, pro
     }
 }
 
+/** Extract data from a block (including payload and admin).
+ *
+ * @param dissector The optional dissector to call.
+ * @param context Context for the @c dissector.
+ * @param tvb Buffer to read from.
+ * @param pinfo Packet info to update.
+ * @param tree The tree to write items under.
+ * @param payload True if this is bundle payload.
+ * @return The number of dissected octets.
+ */
+static gint dissect_carried_data(dissector_handle_t dissector, void *context, tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, gboolean payload) {
+    int sublen = 0;
+    if (dissector) {
+        sublen = call_dissector_with_data(dissector, tvb, pinfo, tree, context);
+        if ((sublen < 0) || ((guint)sublen < tvb_captured_length(tvb))) {
+            expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_block_partial_decode);
+        }
+    }
+
+    if ((sublen == 0) && bp_payload_try_heur && dissect_media) {
+        if (payload) {
+            col_append_sep_fstr(pinfo->cinfo, COL_INFO, NULL, "Assumed CBOR");
+        }
+        TRY {
+            sublen = dissector_try_string(
+                dissect_media,
+                "application/cbor",
+                tvb,
+                pinfo,
+                tree,
+                NULL
+            );
+        }
+        CATCH_ALL {}
+        ENDTRY;
+    }
+    if (sublen == 0) {
+        sublen = call_data_dissector(tvb, pinfo, tree);
+    }
+    return sublen;
+}
+
 /// Top-level protocol dissector
 static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     {
         const gchar *proto_name = col_get_text(pinfo->cinfo, COL_PROTOCOL);
         if (g_strcmp0(proto_name, proto_name_bp) != 0) {
             col_set_str(pinfo->cinfo, COL_PROTOCOL, proto_name_bp);
+            col_clear(pinfo->cinfo, COL_INFO);
         }
     }
     gint offset = 0;
@@ -1311,11 +1391,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
                 bp_dissector_data_t dissect_data;
                 dissect_data.bundle = bundle;
                 dissect_data.block = block;
-                const int sublen = call_dissector_with_data(data_dissect, block->data, pinfo, block->tree_data, &dissect_data);
-                const guint tvb_data_len = tvb_captured_length(block->data);
-                if ((sublen < 0) || ((guint)sublen < tvb_data_len)) {
-                    expert_add_info(pinfo, block->item_block, &ei_block_partial_decode);
-                }
+                dissect_carried_data(data_dissect, &dissect_data, block->data, pinfo, block->tree_data, FALSE);
             }
         }
     }
@@ -1402,7 +1478,7 @@ static int dissect_payload_admin(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
 
     chunk = bp_scan_cbor_chunk(tvb, offset);
     const guint64 *type_code = cbor_require_uint64(chunk);
-    proto_item *item_type = proto_tree_add_cbor_uint64(tree_rec, hf_admin_record_type, pinfo, tvb, chunk, type_code);
+    proto_tree_add_cbor_uint64(tree_rec, hf_admin_record_type, pinfo, tvb, chunk, type_code);
     offset += chunk->data_length;
     bp_cbor_chunk_delete(chunk);
 
@@ -1412,26 +1488,7 @@ static int dissect_payload_admin(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         admin_dissect = dissector_get_uint_handle(admin_dissectors, *type_code);
     }
     tvbuff_t *tvb_record = tvb_new_subset_remaining(tvb, offset);
-    gint sublen = 0;
-    if (admin_dissect) {
-        sublen = call_dissector_with_data(admin_dissect, tvb_record, pinfo, tree_rec, context);
-        if ((sublen < 0) || ((guint)sublen < tvb_captured_length(tvb_record))) {
-            expert_add_info(pinfo, item_type, &ei_block_partial_decode);
-        }
-    }
-    if ((sublen == 0) && dissect_media) {
-        sublen = dissector_try_string(
-            dissect_media,
-            "application/cbor",
-            tvb_record,
-            pinfo,
-            tree_rec,
-            NULL
-        );
-    }
-    if (sublen == 0) {
-        sublen = call_data_dissector(tvb_record, pinfo, tree_rec);
-    }
+    gint sublen = dissect_carried_data(admin_dissect, context, tvb_record, pinfo, tree_rec, TRUE);
     offset += sublen;
 
     proto_item_set_len(item_rec, offset);
@@ -1490,13 +1547,16 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     bp_cbor_chunk_delete(chunk);
     status_field_ix++;
 
-    bp_bundle_ident_t *subj = bp_bundle_ident_new(bp_eid_new(), bp_creation_ts_new(), NULL, NULL);
-
-    proto_tree_add_cbor_eid(tree_status, hf_status_rep_subj_src_nodeid, pinfo, tvb, &offset, subj->src);
+    bp_eid_t *subj_eid = bp_eid_new();
+    proto_tree_add_cbor_eid(tree_status, hf_status_rep_subj_src_nodeid, pinfo, tvb, &offset, subj_eid);
     status_field_ix++;
 
-    proto_tree_add_cbor_timestamp(tree_status, hf_status_rep_subj_ts, pinfo, tvb, &offset, subj->ts);
+    bp_creation_ts_t *subj_ts = bp_creation_ts_new();
+    proto_tree_add_cbor_timestamp(tree_status, hf_status_rep_subj_ts, pinfo, tvb, &offset, subj_ts);
     status_field_ix++;
+
+    bp_bundle_ident_t *subj = bp_bundle_ident_new(subj_eid, subj_ts, NULL, NULL);
+    bp_eid_delete(subj_eid);
 
     if (chunk_status->head_value > status_field_ix) {
         chunk = bp_scan_cbor_chunk(tvb, offset);
@@ -1606,13 +1666,13 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
 
     // identify bundle regardless of payload decoding
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle");
-    if (is_fragment) {
-        col_append_str(pinfo->cinfo, COL_INFO, " fragment");
-    }
 
     // Set if the payload is fully defragmented
     tvbuff_t *tvb_payload = NULL;
+    const char *col_suffix = NULL;
     if (is_fragment) {
+        col_suffix = " (fragment)";
+
         if (bp_reassemble_payload) {
             if (!(bundle->primary->frag_offset
                   && bundle->primary->total_len)) {
@@ -1666,12 +1726,18 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
                     NULL,
                     tree_bundle
                 );
+                if (tvb_payload) {
+                    col_suffix = " (reassembled)";
+                }
             }
             bp_bundle_ident_delete(corr_ident);
         }
     }
     else {
         tvb_payload = tvb;
+    }
+    if (col_suffix) {
+        col_append_str(pinfo->cinfo, COL_INFO, col_suffix);
     }
     if (!tvb_payload) {
         return payload_len;
@@ -1683,17 +1749,16 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         return dissect_payload_admin(tvb_payload, pinfo, tree_top, context);
     }
 
-    const char *eid_uri = bundle->primary->dst_eid->uri;
+    // an EID shouldn't have both of these set
     dissector_handle_t payload_dissect = NULL;
-    if (eid_uri) {
-        payload_dissect = dissector_get_string_handle(payload_dissectors, eid_uri);
+    if (bundle->primary->dst_eid->dtn_wkssp) {
+        payload_dissect = dissector_get_string_handle(payload_dissectors_dtn_wkssp, bundle->primary->dst_eid->dtn_wkssp);
     }
-    if (!payload_dissect) {
-        return call_data_dissector(tvb_payload, pinfo, tree_top);
+    else if (bundle->primary->dst_eid->dtn_serv) {
+        payload_dissect = dissector_get_string_handle(payload_dissectors_dtn_serv, bundle->primary->dst_eid->dtn_serv);
     }
-    else {
-        return call_dissector_with_data(payload_dissect, tvb_payload, pinfo, tree_top, &data);
-    }
+
+    return dissect_carried_data(payload_dissect, &data, tvb_payload, pinfo, tree_top, TRUE);
 }
 
 /** Dissector for Previous Node block.
@@ -1774,9 +1839,7 @@ static gpointer fragment_bundle_ident_persistent_key(
     bp_bundle_ident_t *key = g_slice_new0(bp_bundle_ident_t);
 
     if (ident->src) {
-        key->src = g_slice_new(bp_eid_t);
-        key->src->scheme = ident->src->scheme;
-        key->src->uri = g_strdup(ident->src->uri);
+        key->src = g_strdup(ident->src);
     }
     if (ident->ts) {
         key->ts = g_slice_new(bp_creation_ts_t);
@@ -1798,8 +1861,7 @@ static void fragment_bundle_ident_free_persistent_key(gpointer ptr) {
     bp_bundle_ident_t *key = (bp_bundle_ident_t *)ptr;
 
     if (key->src) {
-        g_free((char *)key->src->uri);
-        g_slice_free(bp_eid_t, key->src);
+        g_free((char *)key->src);
     }
     g_slice_free(bp_creation_ts_t, key->ts);
     g_slice_free(guint64, key->frag_offset);
@@ -1835,23 +1897,31 @@ static void proto_register_bp(void) {
     register_dissector("bpv7", dissect_bp, proto_bp);
     block_dissectors = register_dissector_table("bpv7.block_type", "BPv7 Block", proto_bp, FT_UINT32, BASE_HEX);
     // case-sensitive string matching
-    payload_dissectors = register_dissector_table("bpv7.payload_eid_demux", "BPv7 Payload (by Endpoint ID demux)", proto_bp, FT_STRING, FALSE);
+    payload_dissectors_dtn_wkssp = register_dissector_table("bpv7.payload.dtn_wkssp", "BPv7 Payload (by well-known SSP)", proto_bp, FT_STRING, FALSE);
+    payload_dissectors_dtn_serv = register_dissector_table("bpv7.payload.serv", "BPv7 Payload (by service demux)", proto_bp, FT_STRING, FALSE);
     admin_dissectors = register_dissector_table("bpv7.admin_record_type", "BPv7 Administrative Record", proto_bp, FT_UINT32, BASE_HEX);
 
     module_t *module_bp = prefs_register_protocol(proto_bp, reinit_bp);
     prefs_register_bool_preference(
         module_bp,
-        "compute_crc",
+        "bp_compute_crc",
         "Compute and compare CRCs",
         "If enabled, the blocks will have CRC checks performed.",
         &bp_compute_crc
     );
     prefs_register_bool_preference(
         module_bp,
-        "reassemble_payload",
+        "bp_reassemble_payload",
         "Reassemble fragmented payloads",
         "Whether the dissector should reassemble fragmented bundle payloads.",
         &bp_reassemble_payload
+    );
+    prefs_register_bool_preference(
+        module_bp,
+        "bp_payload_try_heur",
+        "Attempt heuristic dissection of BTSD/payload",
+        "When dissecting block type-specific data and payload and no destination matches, attempt heuristic dissection.",
+        &bp_payload_try_heur
     );
 
     reassembly_table_register(

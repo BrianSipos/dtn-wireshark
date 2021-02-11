@@ -14,12 +14,12 @@
 #include <ws_version.h>
 #include <epan/dissectors/packet-tls.h>
 #include <epan/dissectors/packet-tls-utils.h>
-#define TLS_DISSECTOR_NAME "tls"
+#define DTLS_DISSECTOR_NAME "tls"
 #else
 #include <config.h>
 #include <epan/dissectors/packet-ssl.h>
 #include <epan/dissectors/packet-ssl-utils.h>
-#define TLS_DISSECTOR_NAME "ssl"
+#define DTLS_DISSECTOR_NAME "ssl"
 #define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
 #endif
@@ -46,8 +46,8 @@ static int proto_tcpcl = -1;
 
 /// Dissector handles
 static dissector_handle_t handle_tcpcl = NULL;
-static dissector_handle_t handle_ssl = NULL;
-static dissector_handle_t handle_bp = NULL;
+static dissector_handle_t handle_tls = NULL;
+static dissector_handle_t handle_bpv7 = NULL;
 
 /// Dissect opaque CBOR parameters/results
 static dissector_table_t dissect_media = NULL;
@@ -185,7 +185,7 @@ static int hf_xferext_transferlen_total_len = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_tcpcl, {"TCP Convergence Layer Version 4", "tcpclv4", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_tcpcl, {"DTN TCP Convergence Layer Version 4", "tcpclv4", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_chdr_tree, {"TCPCLv4 Contact Header", "tcpclv4.chdr", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_chdr_magic, {"Protocol Magic", "tcpclv4.chdr.magic", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -764,7 +764,7 @@ static void try_negotiate(tcpcl_conversation_t *tcpcl_convo, packet_info *pinfo,
             && (!frame_loc_valid(&(tcpcl_convo->session_tls_start)))) {
             col_append_str(pinfo->cinfo, COL_INFO, " [STARTTLS]");
             tcpcl_convo->session_tls_start = *loc;
-            ssl_starttls_ack(handle_ssl, pinfo, handle_tcpcl);
+            ssl_starttls_ack(handle_tls, pinfo, handle_tcpcl);
         }
     }
 
@@ -1510,9 +1510,9 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
         gint sublen = 0;
 
         if (tcpcl_decode_bundle) {
-            if (handle_bp) {
+            if (handle_bpv7) {
                 sublen = call_dissector(
-                    handle_bp,
+                    handle_bpv7,
                     xferload_tvb,
                     pinfo,
                     proto_tree_get_parent_tree(tree)
@@ -1621,7 +1621,7 @@ static int dissect_xferext_transferlen(tvbuff_t *tvb, packet_info *pinfo _U_, pr
 static void proto_register_tcpcl(void) {
     g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_register_tcpcl()\n");
     proto_tcpcl = proto_register_protocol(
-        "DTN TCP Convergence Layer Protocol Version 4", /* name */
+        "DTN TCP Convergence Layer Version 4", /* name */
         "TCPCLv4", /* short name */
         "tcpclv4" /* abbrev */
     );
@@ -1688,8 +1688,8 @@ static void proto_reg_handoff_tcpcl(void) {
 
     dissect_media = find_dissector_table("media_type");
 
-    handle_ssl = find_dissector_add_dependency(TLS_DISSECTOR_NAME, proto_tcpcl);
-    handle_bp = find_dissector_add_dependency("bpv7", proto_tcpcl);
+    handle_tls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_tcpcl);
+    handle_bpv7 = find_dissector_add_dependency("bpv7", proto_tcpcl);
 
     /* Packaged extensions */
     {
