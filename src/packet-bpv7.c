@@ -104,10 +104,11 @@ static const val64_string status_report_reason_vals[] = {
 static int hf_bundle_head = -1;
 static int hf_bundle_break = -1;
 static int hf_block = -1;
-static int hf_crc_field_int16 = -1;
-static int hf_crc_field_int32 = -1;
-static int hf_crc_actual_int16 = -1;
-static int hf_crc_actual_int32 = -1;
+
+static int hf_crc_type = -1;
+static int hf_crc_field_uint16 = -1;
+static int hf_crc_field_uint32 = -1;
+static int hf_crc_status = -1;
 
 static int hf_time_dtntime = -1;
 static int hf_time_utctime = -1;
@@ -135,7 +136,6 @@ static int hf_primary_bundle_flags_user_app_ack = -1;
 static int hf_primary_bundle_flags_no_fragment = -1;
 static int hf_primary_bundle_flags_payload_admin = -1;
 static int hf_primary_bundle_flags_is_fragment = -1;
-static int hf_primary_crc_type = -1;
 static int hf_primary_dst_eid = -1;
 static int hf_primary_src_nodeid = -1;
 static int hf_primary_report_nodeid = -1;
@@ -145,7 +145,6 @@ static int hf_primary_lifetime_exp = -1;
 static int hf_primary_expire_ts = -1;
 static int hf_primary_frag_offset = -1;
 static int hf_primary_total_length = -1;
-static int hf_primary_crc_field = -1;
 
 static int hf_bundle_ident = -1;
 static int hf_bundle_seen = -1;
@@ -158,9 +157,7 @@ static int hf_canonical_block_flags_delete_no_process = -1;
 static int hf_canonical_block_flags_status_no_process = -1;
 static int hf_canonical_block_flags_remove_no_process = -1;
 static int hf_canonical_block_flags_replicate_in_fragment = -1;
-static int hf_canonical_crc_type = -1;
 static int hf_canonical_data = -1;
-static int hf_canonical_crc_field = -1;
 
 static int hf_previous_node_nodeid = -1;
 static int hf_bundle_age_time = -1;
@@ -205,10 +202,11 @@ static hf_register_info fields[] = {
     {&hf_bundle_break, {"Indefinite Break", "bpv7.bundle_break", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_block, {"Block", "bpv7.block", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_crc_field_int16, {"CRC Field Integer", "bpv7.crc_field_int", FT_UINT16, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_crc_field_int32, {"CRC field Integer", "bpv7.crc_field_int", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_crc_actual_int16, {"CRC Computed", "bpv7.crc_actual_int", FT_UINT16, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_crc_actual_int32, {"CRC Computed", "bpv7.crc_actual_int", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL}},
+
+    {&hf_crc_type, {"CRC Type", "bpv7.crc_type", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(crc_vals), 0x0, NULL, HFILL}},
+    {&hf_crc_field_uint16, {"CRC Field Integer", "bpv7.crc_field", FT_UINT16, BASE_HEX, NULL, 0x0, NULL, HFILL}},
+    {&hf_crc_field_uint32, {"CRC field Integer", "bpv7.crc_field", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL}},
+    {&hf_crc_status, {"CRC Status", "bpv7.crc_status", FT_UINT8, BASE_NONE, VALS(proto_checksum_vals), 0x0, NULL, HFILL}},
 
     {&hf_time_dtntime, {"DTN Time", "bpv7.time.dtntime", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
     {&hf_time_utctime, {"UTC Time", "bpv7.time.utctime", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0, NULL, HFILL}},
@@ -235,7 +233,6 @@ static hf_register_info fields[] = {
     {&hf_primary_bundle_flags_forwarding_report, {"Request reporting of bundle forwarding", "bpv7.primary.bundle_flags.forwarding_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_FORWARDING_REPORT, NULL, HFILL}},
     {&hf_primary_bundle_flags_delivery_report, {"Request reporting of bundle delivery", "bpv7.primary.bundle_flags.delivery_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_DELIVERY_REPORT, NULL, HFILL}},
     {&hf_primary_bundle_flags_deletion_report, {"Request reporting of bundle deletion", "bpv7.primary.bundle_flags.deleteion_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_DELETION_REPORT, NULL, HFILL}},
-    {&hf_primary_crc_type, {"CRC Type", "bpv7.primary.crc_type", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(crc_vals), 0x0, NULL, HFILL}},
     {&hf_primary_dst_eid, {"Destination Endpoint ID", "bpv7.primary.dst_eid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_src_nodeid, {"Source Node ID", "bpv7.primary.src_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_report_nodeid, {"Report-to Node ID", "bpv7.primary.report_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -245,7 +242,6 @@ static hf_register_info fields[] = {
     {&hf_primary_expire_ts, {"Expire Time", "bpv7.primary.expire_time", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_frag_offset, {"Fragment Offset", "bpv7.primary.frag_offset", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_primary_total_length, {"Total Application Data Unit Length", "bpv7.primary.total_len", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
-    {&hf_primary_crc_field, {"CRC Field", "bpv7.primary.crc_field", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_bundle_ident, {"Bundle Identity", "bpv7.bundle.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_seen, {"First Seen", "bpv7.bundle.first_seen", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -258,9 +254,7 @@ static hf_register_info fields[] = {
     {&hf_canonical_block_flags_status_no_process, {"Status bundle if not processed", "bpv7.canonical.block_flags.status_if_no_process", FT_UINT8, BASE_DEC, NULL, BP_BLOCK_STATUS_IF_NO_PROCESS, NULL, HFILL}},
     {&hf_canonical_block_flags_delete_no_process, {"Delete bundle if not processed", "bpv7.canonical.block_flags.delete_if_no_process", FT_UINT8, BASE_DEC, NULL, BP_BLOCK_DELETE_IF_NO_PROCESS, NULL, HFILL}},
     {&hf_canonical_block_flags_remove_no_process, {"Discard block if not processed", "bpv7.canonical.block_flags.discard_if_no_process", FT_UINT8, BASE_DEC, NULL, BP_BLOCK_REMOVE_IF_NO_PROCESS, NULL, HFILL}},
-    {&hf_canonical_crc_type, {"CRC Type", "bpv7.canonical.crc_type", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(crc_vals), 0x0, NULL, HFILL}},
     {&hf_canonical_data, {"Block Type-Specific Data", "bpv7.canonical.data", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
-    {&hf_canonical_crc_field, {"CRC Field", "bpv7.canonical.crc_field", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_payload_fragments,
         {"Payload fragments", "tcpclv4.payload.fragments",
@@ -420,7 +414,7 @@ static ei_register_info expertitems[] = {
     {&ei_block_type_unknown, {"bpv7.block_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown block type code", EXPFILL}},
     {&ei_block_type_dupe, {"bpv7.block_type_dupe", PI_PROTOCOL, PI_WARN, "Too many blocks of this type", EXPFILL}},
     {&ei_block_partial_decode, {"bpv7.block_partial_decode", PI_UNDECODED, PI_WARN, "Block data not fully dissected", EXPFILL}},
-    {&ei_crc_type_unknown, {"bpv7.ei_crc_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown CRC Type code", EXPFILL}},
+    {&ei_crc_type_unknown, {"bpv7.crc_type_unknown", PI_UNDECODED, PI_ERROR, "Unknown CRC Type code", EXPFILL}},
     {&ei_block_failed_crc, {"bpv7.block_failed_crc", PI_CHECKSUM, PI_WARN, "Block failed CRC", EXPFILL}},
     {&ei_block_num_dupe, {"bpv7.block_num_dupe", PI_PROTOCOL, PI_WARN, "Duplicate block number", EXPFILL}},
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
@@ -853,64 +847,54 @@ static void proto_tree_add_cbor_timestamp(proto_tree *tree, int hfindex, packet_
  * @param tvb The single-block data.
  * @param crc_type Type of CRC to compute.
  * @param crc_field The read-in field value.
- * @param item_crc_field The field to put errors on.
  */
-static void show_crc_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_block, const guint64 *crc_type, tvbuff_t *crc_field, proto_item *item_crc_field) {
+static void show_crc_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_block, const guint64 *crc_type, tvbuff_t *crc_field) {
+    if (!crc_type || !crc_field) {
+        return;
+    }
+
     // Display the data field information
-    if (crc_field) {
-        int hf_crc_field;
-        gint hf_crc_len;
-        switch (*crc_type) {
-            case BP_CRC_16:
-                hf_crc_field = hf_crc_field_int16;
-                hf_crc_len = 2;
-                break;
-            case BP_CRC_32:
-                hf_crc_field = hf_crc_field_int32;
-                hf_crc_len = 4;
-                break;
-            default:
-                hf_crc_field = -1;
-                hf_crc_len = 0;
-                break;
-        }
-        proto_item *item_crc_int = proto_tree_add_item(tree_block, hf_crc_field, crc_field, 0, hf_crc_len, ENC_BIG_ENDIAN);
-        PROTO_ITEM_SET_GENERATED(item_crc_int);
-        proto_tree_move_item(tree_block, item_crc_field, item_crc_int);
+    int hf_crc_field;
+    switch (*crc_type) {
+        case BP_CRC_16:
+            hf_crc_field = hf_crc_field_uint16;
+            break;
+        case BP_CRC_32:
+            hf_crc_field = hf_crc_field_uint32;
+            break;
+        default:
+            hf_crc_field = -1;
+            break;
     }
 
     // Compare against expected result
+    guint32 crc_actual = 0;
+    guint chksum_flags = PROTO_CHECKSUM_NO_FLAGS;
     if (bp_compute_crc) {
-        const guint block_len = tvb_captured_length(tvb);
-        const int hf_crc_actual = (*crc_type == BP_CRC_16 ? hf_crc_actual_int16 : hf_crc_actual_int32);
-        guint64 crc_expect;
-        guint8 *crcbuf = tvb_memdup(pinfo->pool, tvb, 0, block_len);
-        guint64 crc_actual;
-        switch (*crc_type) {
-            case BP_CRC_16:
-                crc_expect = tvb_get_guint16(crc_field, 0, ENC_BIG_ENDIAN);
-                memset(crcbuf + block_len - 2, 0, 2);
-                crc_actual = crc16_ccitt(crcbuf, block_len);
-                break;
-            case BP_CRC_32:
-                crc_expect = tvb_get_guint32(crc_field, 0, ENC_BIG_ENDIAN);
-                memset(crcbuf + block_len - 4, 0, 4);
-                crc_actual = ~crc32c_calculate_no_swap(crcbuf, block_len, CRC32C_PRELOAD);
-                break;
-            default:
-                crc_expect = 0;
-                crc_actual = 0;
-                break;
+        if (*crc_type == BP_CRC_NONE) {
+            chksum_flags |= PROTO_CHECKSUM_NOT_PRESENT;
         }
-        wmem_free(pinfo->pool, crcbuf);
+        else {
+            const guint block_len = tvb_captured_length(tvb);
+            guint8 *crcbuf = tvb_memdup(pinfo->pool, tvb, 0, block_len);
+            switch (*crc_type) {
+                case BP_CRC_16:
+                    memset(crcbuf + block_len - 2, 0, 2);
+                    crc_actual = crc16_ccitt(crcbuf, block_len);
+                    break;
+                case BP_CRC_32:
+                    memset(crcbuf + block_len - 4, 0, 4);
+                    crc_actual = ~crc32c_calculate_no_swap(crcbuf, block_len, CRC32C_PRELOAD);
+                    break;
+                default:
+                    break;
+            }
+            wmem_free(pinfo->pool, crcbuf);
 
-        proto_item *item_crc_actual = proto_tree_add_uint(tree_block, hf_crc_actual, tvb, 0, block_len, crc_actual);
-        PROTO_ITEM_SET_GENERATED(item_crc_actual);
-
-        if (crc_actual != crc_expect) {
-            expert_add_info(pinfo, item_crc_field, &ei_block_failed_crc);
+            chksum_flags |= PROTO_CHECKSUM_VERIFY;
         }
     }
+    proto_tree_add_checksum(tree_block, crc_field, 0, hf_crc_field, hf_crc_status, &ei_block_failed_crc, pinfo, crc_actual, ENC_BIG_ENDIAN, chksum_flags);
 }
 
 static void proto_tree_add_ident(proto_tree *tree, int hfindex, tvbuff_t *tvb, const bp_bundle_ident_t *ident) {
@@ -971,7 +955,7 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 
     chunk = bp_scan_cbor_chunk(tvb, offset);
     guint64 *crc_type = cbor_require_uint64(chunk);
-    proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_primary_crc_type, pinfo, tvb, chunk, crc_type);
+    proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_crc_type, pinfo, tvb, chunk, crc_type);
     offset += chunk->data_length;
     field_ix++;
     bp_cbor_chunk_delete(chunk);
@@ -1054,14 +1038,13 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 
             chunk = bp_scan_cbor_chunk(tvb, offset);
             tvbuff_t *crc_field = cbor_require_string(tvb, chunk);
-            proto_item *item_crc_field = proto_tree_add_cbor_string(tree_block, hf_primary_crc_field, pinfo, tvb, chunk);
             offset += chunk->data_length;
             field_ix++;
             bp_cbor_chunk_delete(chunk);
             block->crc_field = crc_field;
 
             tvbuff_t *tvb_block = tvb_new_subset_length(tvb, start, offset - start);
-            show_crc_info(tvb_block, pinfo, tree_block, crc_type, crc_field, item_crc_field);
+            show_crc_info(tvb_block, pinfo, tree_block, crc_type, crc_field);
             break;
         }
         default:
@@ -1151,7 +1134,7 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 
     chunk = bp_scan_cbor_chunk(tvb, offset);
     guint64 *crc_type = cbor_require_uint64(chunk);
-    proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_canonical_crc_type, pinfo, tvb, chunk, crc_type);
+    proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_crc_type, pinfo, tvb, chunk, crc_type);
     offset += chunk->data_length;
     field_ix++;
     bp_cbor_chunk_delete(chunk);
@@ -1190,14 +1173,13 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 
             chunk = bp_scan_cbor_chunk(tvb, offset);
             tvbuff_t *crc_field = cbor_require_string(tvb, chunk);
-            proto_item *item_crc_field = proto_tree_add_cbor_string(tree_block, hf_canonical_crc_field, pinfo, tvb, chunk);
             offset += chunk->data_length;
             field_ix++;
             bp_cbor_chunk_delete(chunk);
             block->crc_field = crc_field;
 
             tvbuff_t *tvb_block = tvb_new_subset_length(tvb, start, offset - start);
-            show_crc_info(tvb_block, pinfo, tree_block, crc_type, crc_field, item_crc_field);
+            show_crc_info(tvb_block, pinfo, tree_block, crc_type, crc_field);
             break;
         }
         default:

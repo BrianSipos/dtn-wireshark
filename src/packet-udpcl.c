@@ -468,6 +468,7 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
     else {
         // Captured data but not part of item_udpcl
         caplen = dissect_bundle(tvb, pinfo, tree_udpcl);
+        proto_item_set_len(item_udpcl, 0);
     }
     bp_cbor_chunk_delete(first_head);
 
