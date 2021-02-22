@@ -106,7 +106,6 @@ static const value_string msg_reject_reason_vals[]={
     {0, NULL},
 };
 
-static int hf_tcpcl = -1;
 static int hf_chdr_tree = -1;
 static int hf_chdr_magic = -1;
 static int hf_chdr_version = -1;
@@ -185,8 +184,6 @@ static int hf_xferext_transferlen_total_len = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_tcpcl, {"DTN TCP Convergence Layer Version 4", "tcpclv4", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-
     {&hf_chdr_tree, {"TCPCLv4 Contact Header", "tcpclv4.chdr", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_chdr_magic, {"Protocol Magic", "tcpclv4.chdr.magic", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_chdr_version, {"Protocol Version", "tcpclv4.chdr.version", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL}},
@@ -1569,7 +1566,7 @@ static int dissect_tcpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
         tcpcl_convo->passive->port = pinfo->destport;
     }
 
-    proto_item *item_tcpcl = proto_tree_add_item(tree, hf_tcpcl, tvb, 0, 0, ENC_NA);
+    proto_item *item_tcpcl = proto_tree_add_item(tree, proto_tcpcl, tvb, 0, 0, ENC_NA);
     proto_tree *tree_tcpcl = proto_item_add_subtree(item_tcpcl, ett_tcpcl);
 
     tcp_dissect_pdus(tvb, pinfo, tree_tcpcl, TRUE, 1, get_message_len, dissect_message, data);

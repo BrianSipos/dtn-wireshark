@@ -30,6 +30,7 @@ static gboolean bp_payload_try_heur = FALSE;
 
 /// Protocol handles
 static int proto_bp = -1;
+static int proto_bp_admin = -1;
 /// Protocol-level data
 static bp_history_t *bp_history = NULL;
 
@@ -100,7 +101,6 @@ static const val64_string status_report_reason_vals[] = {
     {0, NULL},
 };
 
-static int hf_bundle = -1;
 static int hf_bundle_head = -1;
 static int hf_bundle_break = -1;
 static int hf_block = -1;
@@ -148,6 +148,8 @@ static int hf_primary_total_length = -1;
 static int hf_primary_crc_field = -1;
 
 static int hf_bundle_ident = -1;
+static int hf_bundle_seen = -1;
+static int hf_bundle_seen_time_diff = -1;
 
 static int hf_canonical_type_code = -1;
 static int hf_canonical_block_num = -1;
@@ -165,7 +167,6 @@ static int hf_bundle_age_time = -1;
 static int hf_hop_count_limit = -1;
 static int hf_hop_count_current = -1;
 
-static int hf_admin_record = -1;
 static int hf_admin_record_type = -1;
 static int hf_status_rep = -1;
 static int hf_status_rep_status_info = -1;
@@ -200,7 +201,6 @@ static gint ett_payload_fragments = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_bundle, {"DTN Bundle Protocol Version 7", "bpv7", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_head, {"Indefinite Array", "bpv7.bundle_head", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_break, {"Indefinite Break", "bpv7.bundle_break", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
@@ -240,7 +240,7 @@ static hf_register_info fields[] = {
     {&hf_primary_src_nodeid, {"Source Node ID", "bpv7.primary.src_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_report_nodeid, {"Report-to Node ID", "bpv7.primary.report_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_create_ts, {"Creation Timestamp", "bpv7.primary.create_ts", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_primary_lifetime, {"Lifetime", "bpv7.primary.lifetime", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_microseconds, 0x0, NULL, HFILL}},
+    {&hf_primary_lifetime, {"Lifetime", "bpv7.primary.lifetime", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
     {&hf_primary_lifetime_exp, {"Lifetime Expanded", "bpv7.primary.lifetime_exp", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_expire_ts, {"Expire Time", "bpv7.primary.expire_time", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_frag_offset, {"Fragment Offset", "bpv7.primary.frag_offset", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
@@ -248,6 +248,8 @@ static hf_register_info fields[] = {
     {&hf_primary_crc_field, {"CRC Field", "bpv7.primary.crc_field", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_bundle_ident, {"Bundle Identity", "bpv7.bundle.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_bundle_seen, {"First Seen", "bpv7.bundle.first_seen", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_bundle_seen_time_diff, {"Seen Time", "bpv7.bundle.seen_time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_canonical_type_code, {"Type Code", "bpv7.canonical.type_code", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(blocktype_vals), 0x0, NULL, HFILL}},
     {&hf_canonical_block_num, {"Block Number", "bpv7.canonical.block_num", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
@@ -298,18 +300,17 @@ static hf_register_info fields[] = {
 
     {&hf_previous_node_nodeid, {"Previous Node ID", "bpv7.previous_node.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
-    {&hf_bundle_age_time, {"Bundle Age", "bpv7.bundle_age.time", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_microseconds, 0x0, NULL, HFILL}},
+    {&hf_bundle_age_time, {"Bundle Age", "bpv7.bundle_age.time", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
 
     {&hf_hop_count_limit, {"Hop Limit", "bpv7.hop_count.limit", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_hop_count_current, {"Hop Count", "bpv7.hop_count.current", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
 
-    {&hf_admin_record, {"BPv7 Administrative Record", "bpv7.admin_rec", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_admin_record_type, {"Record Type Code", "bpv7.admin_rec.type_code", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(admin_type_vals), 0x0, NULL, HFILL}},
 
     {&hf_status_rep, {"Status Report", "bpv7.status_rep", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_status_info, {"Status Information", "bpv7.status_rep.status_info", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_assert_val, {"Status Value", "bpv7.status_assert.val", FT_BOOLEAN, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_status_assert_time, {"Received at", "bpv7.status_assert.time", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_status_assert_time, {"Status at", "bpv7.status_assert.time", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_received, {"Reporting node received bundle", "bpv7.status_rep.received", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_forwarded, {"Reporting node forwarded bundle", "bpv7.status_rep.forwarded", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_delivered, {"Reporting node delivered bundle", "bpv7.status_rep.delivered", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -321,7 +322,7 @@ static hf_register_info fields[] = {
     {&hf_status_rep_subj_payload_len, {"Subject Payload Length", "bpv7.status_rep.subj_payload_len", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ident, {"Subject Identity", "bpv7.status_rep.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ref, {"Subject Bundle", "bpv7.status_rep.subj_ref", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_status_time_diff, {"Status Time", "bpv7.status_rep.time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_status_time_diff, {"Status Time", "bpv7.status_rep.subj_time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
 static WS_FIELDTYPE bundle_flags[] = {
@@ -408,7 +409,6 @@ static expert_field ei_block_failed_crc = EI_INIT;
 static expert_field ei_block_num_dupe = EI_INIT;
 static expert_field ei_block_payload_index = EI_INIT;
 static expert_field ei_block_payload_num = EI_INIT;
-static expert_field ei_block_is_fragment = EI_INIT;
 static expert_field ei_fragment_reassemble_size = EI_INIT;
 static expert_field ei_fragment_tot_mismatch = EI_INIT;
 static expert_field ei_block_sec_bib_tgt = EI_INIT;
@@ -425,7 +425,6 @@ static ei_register_info expertitems[] = {
     {&ei_block_num_dupe, {"bpv7.block_num_dupe", PI_PROTOCOL, PI_WARN, "Duplicate block number", EXPFILL}},
     {&ei_block_payload_index, {"bpv7.block_payload_index", PI_PROTOCOL, PI_WARN, "Payload must be the last block", EXPFILL}},
     {&ei_block_payload_num, {"bpv7.block_payload_num", PI_PROTOCOL, PI_WARN, "Invalid payload block number", EXPFILL}},
-    {&ei_block_is_fragment, {"bpv7.block_is_fragment", PI_PROTOCOL, PI_NOTE, "Invalid payload block number", EXPFILL}},
     {&ei_fragment_reassemble_size, {"bpv7.fragment_reassemble_size", PI_REASSEMBLE, PI_ERROR, "Cannot defragment this size (wireshark limitation)", EXPFILL}},
     {&ei_fragment_tot_mismatch, {"bpv7.fragment_tot_mismatch", PI_REASSEMBLE, PI_ERROR, "Inconsistent total length between fragments", EXPFILL}},
     {&ei_block_sec_bib_tgt, {"bpv7.bpsec.bib_target", PI_COMMENTS_GROUP, PI_COMMENT, "Block is an integrity target", EXPFILL}},
@@ -600,6 +599,19 @@ guint bp_bundle_ident_hash(gconstpointer key) {
     );
 }
 
+/** Convert DTN time to time delta.
+ * DTN Time is defined in Section 4.1.6.
+ *
+ * @param dtntime Number of milliseconds from an epoch.
+ * @return The associated absolute time.
+ */
+static nstime_t dtn_to_delta(const gint64 dtntime) {
+    nstime_t utctime;
+    utctime.secs = dtntime / 1000;
+    utctime.nsecs = 1000000 * (dtntime % 1000);
+    return utctime;
+}
+
 /** Convert DTN time to absolute time.
  * DTN Time is defined in Section 4.1.6.
  *
@@ -614,7 +626,7 @@ static nstime_t dtn_to_utctime(const gint64 dtntime) {
 }
 
 proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_eid_t *eid) {
-    proto_item *item_eid = proto_tree_add_item(tree, hfindex, tvb, *offset, 0, ENC_NA);
+    proto_item *item_eid = proto_tree_add_item(tree, hfindex, tvb, *offset, -1, ENC_NA);
     proto_tree *tree_eid = proto_item_add_subtree(item_eid, ett_eid);
     const gint eid_start = *offset;
 
@@ -760,7 +772,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
 }
 
 static void proto_tree_add_dtn_time(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_dtn_time_t *out) {
-    proto_item *item_time = proto_tree_add_item(tree, hfindex, tvb, *offset, 0, ENC_NA);
+    proto_item *item_time = proto_tree_add_item(tree, hfindex, tvb, *offset, -1, ENC_NA);
     proto_tree *tree_time = proto_item_add_subtree(item_time, ett_time);
     const gint offset_start = *offset;
 
@@ -811,7 +823,7 @@ static void proto_tree_add_dtn_time(proto_tree *tree, int hfindex, packet_info *
  * @param[out] ts If non-null, the timestamp to write to.
  */
 static void proto_tree_add_cbor_timestamp(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_creation_ts_t *ts) {
-    proto_item *item_ts = proto_tree_add_item(tree, hfindex, tvb, *offset, 0, ENC_NA);
+    proto_item *item_ts = proto_tree_add_item(tree, hfindex, tvb, *offset, -1, ENC_NA);
     proto_tree *tree_ts = proto_item_add_subtree(item_ts, ett_create_ts);
     const gint offset_start = *offset;
 
@@ -985,9 +997,7 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     const guint64 *lifetime = cbor_require_uint64(chunk);
     proto_tree_add_cbor_uint64(tree_block, hf_primary_lifetime, pinfo, tvb, chunk, lifetime);
     if (lifetime) {
-        nstime_t lifetime_exp;
-        lifetime_exp.secs = *lifetime / 1000000;
-        lifetime_exp.nsecs = (*lifetime % 1000000) * 1000;
+        nstime_t lifetime_exp = dtn_to_delta(*lifetime);
         proto_item *item_lifetime_exp = proto_tree_add_time(tree_block, hf_primary_lifetime_exp, tvb, chunk->start, chunk->head_length, &lifetime_exp);
         PROTO_ITEM_SET_GENERATED(item_lifetime_exp);
 
@@ -1288,7 +1298,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
     }
     gint offset = 0;
 
-    proto_item *item_bundle = proto_tree_add_item(tree, hf_bundle, tvb, 0, 0, ENC_NA);
+    proto_item *item_bundle = proto_tree_add_item(tree, proto_bp, tvb, 0, -1, ENC_NA);
     proto_tree *tree_bundle = proto_item_add_subtree(item_bundle, ett_bundle);
 
     bp_bundle_t *bundle = bp_bundle_new();
@@ -1316,7 +1326,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
     bp_bundle_ident_t *ident = NULL;
     while (TRUE) {
         if (offset >= (gint)buflen) {
-            proto_item *item_break = proto_tree_add_item(tree_bundle, hf_bundle_break, tvb, offset, 0, ENC_NA);
+            proto_item *item_break = proto_tree_add_item(tree_bundle, hf_bundle_break, tvb, offset, -1, ENC_NA);
             expert_add_info_format(pinfo, item_break, &ei_cbor_array_wrong_size, "Array break missing");
             break;
         }
@@ -1331,7 +1341,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 
         // Load just the array start
         const gint block_start = offset;
-        proto_item *item_block = proto_tree_add_item(tree_bundle, hf_block, tvb, block_start, 0, ENC_NA);
+        proto_item *item_block = proto_tree_add_item(tree_bundle, hf_block, tvb, block_start, -1, ENC_NA);
         proto_tree *tree_block = proto_item_add_subtree(item_block, ett_block);
 
         if (block_ix == 0) {
@@ -1349,6 +1359,17 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
                     bundle->primary->total_len
                 );
                 proto_tree_add_ident(tree_bundle, hf_bundle_ident, tvb, ident);
+
+                const bp_bundle_t *seen_found = g_hash_table_lookup(bp_history->bundles, ident);
+                if (seen_found && (seen_found->frame_num != pinfo->num)) {
+                    proto_item *item_seen = proto_tree_add_uint(tree_bundle, hf_bundle_seen, tvb, 0, 0, seen_found->frame_num);
+                    PROTO_ITEM_SET_GENERATED(item_seen);
+
+                    nstime_t td;
+                    nstime_delta(&td, &(bundle->frame_time), &(seen_found->frame_time));
+                    proto_item *item_td = proto_tree_add_time(tree_bundle, hf_bundle_seen_time_diff, tvb, 0, 0, &td);
+                    PROTO_ITEM_SET_GENERATED(item_td);
+                }
             }
         }
         else {
@@ -1432,7 +1453,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
 
 static gboolean proto_tree_add_status_assertion(proto_tree *tree, int hfassert, packet_info *pinfo, tvbuff_t *tvb, gint *offset) {
     const gint assert_start = *offset;
-    proto_item *item_assert = proto_tree_add_item(tree, hfassert, tvb, assert_start, 0, ENC_NA);
+    proto_item *item_assert = proto_tree_add_item(tree, hfassert, tvb, assert_start, -1, ENC_NA);
     proto_tree *tree_assert = proto_item_add_subtree(item_assert, ett_status_assert);
 
     gboolean result = FALSE;
@@ -1465,7 +1486,7 @@ static gboolean proto_tree_add_status_assertion(proto_tree *tree, int hfassert, 
 }
 
 static int dissect_payload_admin(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, bp_dissector_data_t *context) {
-    proto_item *item_rec = proto_tree_add_item(tree, hf_admin_record, tvb, 0, 0, ENC_NA);
+    proto_item *item_rec = proto_tree_add_item(tree, proto_bp_admin, tvb, 0, -1, ENC_NA);
     proto_tree *tree_rec = proto_item_add_subtree(item_rec, ett_admin);
     gint offset = 0;
 
@@ -1504,7 +1525,7 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     gint offset = 0;
 
     // Status Information array head
-    proto_item *item_status = proto_tree_add_item(tree, hf_status_rep, tvb, status_start, 0, ENC_NA);
+    proto_item *item_status = proto_tree_add_item(tree, hf_status_rep, tvb, status_start, -1, ENC_NA);
     proto_tree *tree_status = proto_item_add_subtree(item_status, ett_status_rep);
     gint status_field_ix = 0;
 
@@ -1521,7 +1542,7 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     gboolean status_deleted = FALSE;
     {
         const gint info_start = offset;
-        proto_item *item_info = proto_tree_add_item(tree_status, hf_status_rep_status_info, tvb, info_start, 0, ENC_NA);
+        proto_item *item_info = proto_tree_add_item(tree_status, hf_status_rep_status_info, tvb, info_start, -1, ENC_NA);
         proto_tree *tree_info = proto_item_add_subtree(item_info, ett_status_info);
         chunk = cbor_require_array_with_size(tvb, pinfo, item_info, &offset, 4, 4);
         if (!chunk) {
@@ -1646,7 +1667,6 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
 
     // Parent bundle tree
     proto_tree *tree_block = proto_tree_get_parent_tree(tree);
-    proto_tree *item_block = proto_tree_get_parent(tree_block);
     proto_tree *tree_bundle = proto_tree_get_parent_tree(tree_block);
     proto_tree *item_bundle = proto_tree_get_parent(tree_bundle);
     // Back up to top-level
@@ -1659,7 +1679,6 @@ static int dissect_block_payload(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     }
     if (is_fragment) {
         proto_item_append_text(item_bundle, ", FRAGMENT");
-        expert_add_info(pinfo, item_block, &ei_block_is_fragment);
     }
     const guint payload_len = tvb_captured_length(tvb);
     proto_item_append_text(item_bundle, ", Payload-Size: %d", payload_len);
@@ -1899,7 +1918,6 @@ static void proto_register_bp(void) {
     // case-sensitive string matching
     payload_dissectors_dtn_wkssp = register_dissector_table("bpv7.payload.dtn_wkssp", "BPv7 Payload (by well-known SSP)", proto_bp, FT_STRING, FALSE);
     payload_dissectors_dtn_serv = register_dissector_table("bpv7.payload.serv", "BPv7 Payload (by service demux)", proto_bp, FT_STRING, FALSE);
-    admin_dissectors = register_dissector_table("bpv7.admin_record_type", "BPv7 Administrative Record", proto_bp, FT_UINT32, BASE_HEX);
 
     module_t *module_bp = prefs_register_protocol(proto_bp, reinit_bp);
     prefs_register_bool_preference(
@@ -1928,6 +1946,14 @@ static void proto_register_bp(void) {
         &bp_reassembly_table,
         &bundle_reassembly_table_functions
     );
+
+
+    proto_bp_admin = proto_register_protocol(
+        "BPv7 Administrative Record", /* name */
+        "BPv7 Admin", /* short name */
+        "bpv7.admin_rec" /* abbrev */
+    );
+    admin_dissectors = register_dissector_table("bpv7.admin_record_type", "BPv7 Administrative Record Type", proto_bp_admin, FT_UINT32, BASE_HEX);
 }
 
 static void proto_reg_handoff_bp(void) {

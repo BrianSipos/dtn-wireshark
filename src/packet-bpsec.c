@@ -172,7 +172,7 @@ static gint dissect_value(dissector_handle_t dissector, gint64 *typeid, tvbuff_t
 /** Dissector for Bundle Integrity block.
  */
 static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, const bp_dissector_data_t *const data, int root_hfindex) {
-    proto_item *item_asb = proto_tree_add_item(tree, root_hfindex, tvb, 0, 0, ENC_NA);
+    proto_item *item_asb = proto_tree_add_item(tree, root_hfindex, tvb, 0, -1, ENC_NA);
     proto_tree *tree_asb = proto_item_add_subtree(item_asb, ett_asb);
     gint offset = 0;
 
@@ -259,7 +259,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                 const gint offset_param_pair = offset;
                 bp_cbor_chunk_t *chunk_param_pair = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 2, 2);
                 if (chunk_param_pair) {
-                    proto_item *item_param_pair = proto_tree_add_item(tree_param_list, hf_asb_param_pair, tvb, offset_param_pair, 0, ENC_NA);
+                    proto_item *item_param_pair = proto_tree_add_item(tree_param_list, hf_asb_param_pair, tvb, offset_param_pair, -1, ENC_NA);
                     proto_tree *tree_param_pair = proto_item_add_subtree(item_param_pair, ett_param_pair);
 
                     bp_cbor_chunk_t *chunk_paramid = bp_scan_cbor_chunk(tvb, offset);
@@ -323,7 +323,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                     const gint offset_result_pair = offset;
                     bp_cbor_chunk_t *chunk_result_pair = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 2, 2);
                     if (chunk_result_pair) {
-                        proto_item *item_result_pair = proto_tree_add_item(tree_result_tgt_list, hf_asb_result_pair, tvb, offset_result_pair, 0, ENC_NA);
+                        proto_item *item_result_pair = proto_tree_add_item(tree_result_tgt_list, hf_asb_result_pair, tvb, offset_result_pair, -1, ENC_NA);
                         proto_tree *tree_result_pair = proto_item_add_subtree(item_result_pair, ett_result_pair);
 
                         bp_cbor_chunk_t *chunk_resultid = bp_scan_cbor_chunk(tvb, offset);

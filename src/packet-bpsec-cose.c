@@ -85,7 +85,7 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
 static int dissect_cose_x509(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    proto_item *item_list = proto_tree_add_item(tree, hf_cose_x509, tvb, 0, 0, ENC_NA);
+    proto_item *item_list = proto_tree_add_item(tree, hf_cose_x509, tvb, 0, -1, ENC_NA);
     proto_tree *tree_list = proto_item_add_subtree(item_list, ett_cose_x509);
 
     bp_cbor_chunk_t *head = cbor_require_array(tvb, pinfo, item_list, &offset);

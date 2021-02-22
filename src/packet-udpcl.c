@@ -59,7 +59,6 @@ static reassembly_table udpcl_reassembly_table;
 
 const unit_name_string units_item_items = { " item", " items" };
 
-static int hf_udpcl = -1;
 static int hf_keepalive = -1;
 static int hf_ext_map = -1;
 static int hf_ext_id = -1;
@@ -88,7 +87,6 @@ static gint ett_xferload_fragments = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_udpcl, {"DTN UDP Convergence Layer", "udpcl", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_keepalive, {"Keepalive", "udpcl.keepalive", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_ext_map, {"Extension Map", "udpcl.ext", FT_INT64, BASE_DEC | BASE_UNIT_STRING, &units_item_items, 0x0, NULL, HFILL}},
     {&hf_ext_id, {"Extension ID", "udpcl.ext.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
@@ -254,7 +252,7 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
 static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ext_item, int offset) {
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Transfer");
 
-    proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, 0, ENC_NA);
+    proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, -1, ENC_NA);
     proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
     gint init_offset = offset;
 
@@ -373,7 +371,7 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
 
     const guint buflen = tvb_captured_length(tvb);
     guint caplen = 0;
-    proto_item *item_udpcl = proto_tree_add_item(tree, hf_udpcl, tvb, 0, 0, ENC_NA);
+    proto_item *item_udpcl = proto_tree_add_item(tree, proto_udpcl, tvb, 0, -1, ENC_NA);
     proto_tree *tree_udpcl = proto_item_add_subtree(item_udpcl, ett_udpcl);
 
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
