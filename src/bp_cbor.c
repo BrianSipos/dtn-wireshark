@@ -69,18 +69,12 @@ bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start) {
     head->type_minor = (first & 0x1f);
     switch ((cbor_type)(head->type_major)) {
         case CBOR_TYPE_UINT:
+        case CBOR_TYPE_NEGINT:
         case CBOR_TYPE_TAG:
             cbor_scan_unsigned(head, tvb);
             if (head->type_minor > 0x1B) {
                 head->error = &ei_cbor_invalid;
             }
-            break;
-        case CBOR_TYPE_NEGINT:
-            cbor_scan_unsigned(head, tvb);
-            if (head->type_minor > 0x1B) {
-                head->error = &ei_cbor_invalid;
-            }
-            head->rawvalue = -(head->rawvalue) - 1;
             break;
         case CBOR_TYPE_BYTESTRING:
         case CBOR_TYPE_STRING:
@@ -125,7 +119,7 @@ bp_cbor_chunk_t * bp_scan_cbor_chunk(tvbuff_t *tvb, gint start) {
             g_sequence_append(chunk->errors, head->error);
         }
         if (head->type_major == CBOR_TYPE_TAG) {
-            gint64 *tag = wmem_new(wmem_file_scope(), gint64);
+            guint64 *tag = wmem_new(wmem_file_scope(), guint64);
             *tag = head->rawvalue;
             g_sequence_append(chunk->tags, tag);
             bp_cbor_head_delete(head);
@@ -134,7 +128,13 @@ bp_cbor_chunk_t * bp_scan_cbor_chunk(tvbuff_t *tvb, gint start) {
         // An actual (non-tag) header
         chunk->type_major = head->type_major;
         chunk->type_minor = head->type_minor;
-        chunk->head_value = head->rawvalue;
+
+        if (head->type_major == CBOR_TYPE_NEGINT) {
+            chunk->head_value = -(head->rawvalue) - 1;
+        }
+        else {
+            chunk->head_value = head->rawvalue;
+        }
 
         switch ((cbor_type)(head->type_major)) {
             case CBOR_TYPE_BYTESTRING:

@@ -27,8 +27,8 @@ typedef struct {
     guint8 type_major;
     /// Minor type of this item
     guint8 type_minor;
-    /// Either the encoded signed value or zero (with one-bit truncation possible)
-    gint64 rawvalue;
+    /// Raw head "value" which may be from the @c type_minor
+    guint64 rawvalue;
 } bp_cbor_head_t;
 
 bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start);
@@ -68,7 +68,7 @@ typedef struct {
     gint data_length;
     /// Additional blocks in order (type expert_field*)
     GSequence *errors;
-    /// Additional blocks in order (type gint64)
+    /// Additional blocks in order (type guint64)
     GSequence *tags;
 
     /// Major type of this block.
@@ -76,7 +76,7 @@ typedef struct {
     cbor_type type_major;
     /// Minor type of this item
     guint8 type_minor;
-    /// The header-encoded value
+    /// The header-encoded value, which is 63-bit truncated
     gint64 head_value;
 } bp_cbor_chunk_t;
 
