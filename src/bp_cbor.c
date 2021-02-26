@@ -257,6 +257,18 @@ bp_cbor_chunk_t * cbor_require_array_with_size(tvbuff_t *tvb, packet_info *pinfo
     return head;
 }
 
+bp_cbor_chunk_t * cbor_require_map(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset) {
+    bp_cbor_chunk_t *head = bp_scan_cbor_chunk(tvb, *offset);
+    *offset += head->data_length;
+
+    if (head->type_major != CBOR_TYPE_MAP) {
+        expert_add_info_format(pinfo, item, &ei_cbor_wrong_type, "Should-be-map has type %d, should be %d", head->type_major, CBOR_TYPE_MAP);
+        bp_cbor_chunk_delete(head);
+        head = NULL;
+    }
+    return head;
+}
+
 gboolean * cbor_require_boolean(const bp_cbor_chunk_t *chunk) {
     switch (chunk->type_major) {
         case CBOR_TYPE_FLOAT_CTRL: {

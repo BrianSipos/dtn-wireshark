@@ -63,6 +63,8 @@ static const val64_string blocktype_vals[] = {
     {BP_BLOCKTYPE_PREV_NODE, "Previous Node"},
     {BP_BLOCKTYPE_BUNDLE_AGE, "Bundle Age"},
     {BP_BLOCKTYPE_HOP_COUNT, "Hop Count"},
+    {BP_BLOCKTYPE_BIB, "Block Integrity Block"},
+    {BP_BLOCKTYPE_BCB, "Block Confidentiality Block"},
     {0, NULL},
 };
 
@@ -98,6 +100,13 @@ static const val64_string status_report_reason_vals[] = {
     {7, "No timely contact with next node on route"},
     {8, "Block unintelligible"},
     {9, "Hop limit exceeded"},
+    {10, "Traffic pared"},
+    {11, "Block unsupported"},
+    {12, "Missing Security Operation"},
+    {13, "Unknown Security Operation"},
+    {14, "Unexpected Security Operation"},
+    {15, "Failed Security Operation"},
+    {16, "Conflicting Security Operation"},
     {0, NULL},
 };
 
@@ -224,10 +233,10 @@ static hf_register_info fields[] = {
 
     {&hf_primary_version, {"Version", "bpv7.primary.version", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_bundle_flags, {"Bundle Flags", "bpv7.primary.bundle_flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_primary_bundle_flags_is_fragment, {"Bundle is Fragment", "bpv7.primary.bundle_flags.is_fragment", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_IS_FRAGMENT, NULL, HFILL}},
-    {&hf_primary_bundle_flags_payload_admin, {"Payload is Administrative", "bpv7.primary.bundle_flags.payload_admin", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_PAYLOAD_ADMIN, NULL, HFILL}},
-    {&hf_primary_bundle_flags_no_fragment, {"Bundle must not be Fragmented", "bpv7.primary.bundle_flags.no_fragment", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_NO_FRAGMENT, NULL, HFILL}},
-    {&hf_primary_bundle_flags_user_app_ack, {"Acknowledgement by Application required", "bpv7.primary.bundle_flags.user_app_ack", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_USER_APP_ACK, NULL, HFILL}},
+    {&hf_primary_bundle_flags_is_fragment, {"Bundle is a fragment", "bpv7.primary.bundle_flags.is_fragment", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_IS_FRAGMENT, NULL, HFILL}},
+    {&hf_primary_bundle_flags_payload_admin, {"Payload is an administrative record", "bpv7.primary.bundle_flags.payload_admin", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_PAYLOAD_ADMIN, NULL, HFILL}},
+    {&hf_primary_bundle_flags_no_fragment, {"Bundle must not be fragmented", "bpv7.primary.bundle_flags.no_fragment", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_NO_FRAGMENT, NULL, HFILL}},
+    {&hf_primary_bundle_flags_user_app_ack, {"Acknowledgement by application is requested", "bpv7.primary.bundle_flags.user_app_ack", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_USER_APP_ACK, NULL, HFILL}},
     {&hf_primary_bundle_flags_req_status_time, {"Status time requested in reports", "bpv7.primary.bundle_flags.req_status_time", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_STATUS_TIME, NULL, HFILL}},
     {&hf_primary_bundle_flags_reception_report, {"Request reporting of bundle reception", "bpv7.primary.bundle_flags.reception_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_RECEPTION_REPORT, NULL, HFILL}},
     {&hf_primary_bundle_flags_forwarding_report, {"Request reporting of bundle forwarding", "bpv7.primary.bundle_flags.forwarding_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_FORWARDING_REPORT, NULL, HFILL}},

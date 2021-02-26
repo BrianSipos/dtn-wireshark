@@ -20,6 +20,13 @@ add_library(
 target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
 
 add_library(
+    bpv7_acme SHARED
+    packet-bpv7-acme.c
+)
+target_link_libraries(bpv7_acme PUBLIC PkgConfig::WIRESHARK)
+target_link_libraries(bpv7_acme PRIVATE bpv7)
+
+add_library(
     bpsec SHARED
     packet-bpsec.h packet-bpsec.c
 )
@@ -35,7 +42,7 @@ target_link_libraries(bpsec_cose PRIVATE bpsec)
 
 if(INSTALL_MODULE_PATH)
     install(
-        TARGETS tcpclv4 udpcl bpv7 bpsec bpsec_cose
+        TARGETS tcpclv4 udpcl bpv7 bpv7_acme bpsec bpsec_cose
         LIBRARY DESTINATION ${INSTALL_MODULE_PATH}
     )
 endif(INSTALL_MODULE_PATH)

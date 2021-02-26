@@ -412,11 +412,11 @@ static void proto_reg_handoff_bpsec(void) {
     /* Packaged extensions */
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_block_bib, proto_bpsec);
-        dissector_add_uint("bpv7.block_type", 192, hdl); //FIXME: placeholder block type ID
+        dissector_add_uint("bpv7.block_type", 11, hdl);
     }
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_block_bcb, proto_bpsec);
-        dissector_add_uint("bpv7.block_type", 193, hdl); //FIXME: placeholder block type ID
+        dissector_add_uint("bpv7.block_type", 12, hdl);
     }
 
     reinit_bpsec();

@@ -71,6 +71,10 @@ typedef enum {
     BP_BLOCKTYPE_BUNDLE_AGE = 7,
     /// Hop Count
     BP_BLOCKTYPE_HOP_COUNT = 10,
+    /// Block Integrity Block
+    BP_BLOCKTYPE_BIB = 11,
+    /// Block Confidentiality Block
+    BP_BLOCKTYPE_BCB = 12,
 } BlockTypeCode;
 
 /** Administrative record type codes.
@@ -80,17 +84,6 @@ typedef enum {
     /// Bundle status report
     BP_ADMINTYPE_BUNDLE_STATUS = 1,
 } AdminRecordTypeCode;
-
-/** Bundle status report types.
- * These are not enumerated by the spec but are encoded separately
- * in Section 5.1.
- */
-typedef enum {
-    BP_STATUS_REPORT_RECEIVED,
-    BP_STATUS_REPORT_FORWARDED,
-    BP_STATUS_REPORT_DELIVERED,
-    BP_STATUS_REPORT_DELETED,
-} AdminBundleStatusInfoType;
 
 /// DTN time with derived UTC time
 typedef struct {
@@ -167,7 +160,8 @@ typedef struct {
     /// Display item for the whole block
     proto_item *item_block;
 
-    /// Bundle flags (assumed zero)
+    /// Bundle flags (assumed zero).
+    /// Values are BundleProcessingFlag.
     guint64 flags;
     /// Destination EID
     bp_eid_t *dst_eid;

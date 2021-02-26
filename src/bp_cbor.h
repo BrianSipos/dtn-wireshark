@@ -76,7 +76,7 @@ typedef struct {
     cbor_type type_major;
     /// Minor type of this item
     guint8 type_minor;
-    /// The header-encoded value, which is 63-bit truncated
+    /// The header-encoded value, which is signed and 63-bit truncated
     gint64 head_value;
 } bp_cbor_chunk_t;
 
@@ -142,6 +142,12 @@ gboolean cbor_require_array_size(tvbuff_t *tvb, packet_info *pinfo, proto_item *
  * The chunk can be deleted with bp_cbor_chunk_delete().
  */
 bp_cbor_chunk_t * cbor_require_array_with_size(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset, gint64 count_min, gint64 count_max);
+
+/** Require a map item.
+ *
+ * @return The array head chunk or NULL.
+ */
+bp_cbor_chunk_t * cbor_require_map(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset);
 
 /** Require a CBOR item to have a boolean value.
  *
