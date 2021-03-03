@@ -227,32 +227,6 @@ bp_block_canonical_t * bp_block_canonical_new(guint64 index);
  */
 void bp_block_canonical_delete(gpointer ptr);
 
-/// Metadata extracted per-bundle
-typedef struct {
-    /// Index of the frame
-    guint32 frame_num;
-    /// Timestamp on the frame (end time if reassembled)
-    nstime_t frame_time;
-    /// Required primary block
-    bp_block_primary_t *primary;
-    /// Additional blocks in order (type bp_block_canonical_t)
-    GSequence *blocks;
-    /// Map from block number (guint64) to pointer to block of that number
-    /// (bp_block_canonical_t owned by #blocks)
-    GHashTable *block_nums;
-    /// Map from block type code (guint64) to sequence (GPtrArray) of
-    /// pointers to block of that type (bp_block_canonical_t owned by #blocks)
-    GHashTable *block_types;
-} bp_bundle_t;
-
-/** Construct a new object on the file allocator.
- */
-bp_bundle_t * bp_bundle_new();
-
-/** Function to match the GDestroyNotify signature.
- */
-void bp_bundle_delete(gpointer ptr);
-
 /// Identification of an individual bundle
 typedef struct {
     /// Normalized EID URI for the Source Node ID
@@ -281,6 +255,34 @@ gboolean bp_bundle_ident_equal(gconstpointer a, gconstpointer b);
  */
 guint bp_bundle_ident_hash(gconstpointer key);
 
+/// Metadata extracted per-bundle
+typedef struct {
+    /// Index of the frame
+    guint32 frame_num;
+    /// Timestamp on the frame (end time if reassembled)
+    nstime_t frame_time;
+    /// Bundle identity derived from #primary data
+    bp_bundle_ident_t *ident;
+    /// Required primary block
+    bp_block_primary_t *primary;
+    /// Additional blocks in order (type bp_block_canonical_t)
+    GSequence *blocks;
+    /// Map from block number (guint64) to pointer to block of that number
+    /// (bp_block_canonical_t owned by #blocks)
+    GHashTable *block_nums;
+    /// Map from block type code (guint64) to sequence (GPtrArray) of
+    /// pointers to block of that type (bp_block_canonical_t owned by #blocks)
+    GHashTable *block_types;
+} bp_bundle_t;
+
+/** Construct a new object on the file allocator.
+ */
+bp_bundle_t * bp_bundle_new();
+
+/** Function to match the GDestroyNotify signature.
+ */
+void bp_bundle_delete(gpointer ptr);
+
 /** Extract an Endpoint ID.
  *
  * @param tree The tree to write items under.
@@ -297,15 +299,19 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info 
 typedef struct {
     /// Map from a bundle ID (bp_bundle_ident_t) to bundle (bp_bundle_t)
     GHashTable *bundles;
+    /// Map from subject bundle ID (bp_bundle_ident_t) to
+    /// map of references (bp_bundle_ident_t) of status bundles to NULL
+    /// i.e. a set
+    GHashTable *admin_status;
 } bp_history_t;
 
 /** Data supplied to each block sub-dissector.
  */
 typedef struct {
     /// The overall bundle being decoded (so far)
-    const bp_bundle_t *bundle;
+    bp_bundle_t *bundle;
     /// This block being decoded
-    const bp_block_canonical_t *block;
+    bp_block_canonical_t *block;
 } bp_dissector_data_t;
 
 #endif /* WIRESHARK_PLUGIN_SRC_PACKET_BPV7_H_ */

@@ -58,11 +58,11 @@ typedef enum {
     CBOR_CTRL_UNDEF = 23
 } _cbor_ctrl;
 
-/// The basic header structure of CBOR encoding
+/// A data-containing, optionally-tagged chunk of CBOR
 typedef struct {
     /// The start offset of this chunk
     gint start;
-    /// The length of just this chunk
+    /// The length of just this header any any preceding tags
     gint head_length;
     /// The length of this chunk and its immediate definite data (i.e. strings)
     gint data_length;
