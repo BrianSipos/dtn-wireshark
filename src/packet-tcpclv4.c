@@ -245,7 +245,7 @@ static hf_register_info fields[] = {
     // XFER_ACK fields
     {&hf_xfer_ack_ack_len, {"Acknowledged Length", "tcpclv4.xfer_ack.ack_len", FT_UINT64, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_xfer_ack_time_start, {"Time since transfer Start", "tcpclv4.xfer_segment.time_since_start", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_xfer_ack_related_seg, {"Related XFER_SEGMENT", "tcpclv4.xfer_ack.related_seg", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_xfer_ack_related_seg, {"Related XFER_SEGMENT", "tcpclv4.xfer_ack.related_seg", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_ACK), 0x0, NULL, HFILL}},
     {&hf_xfer_ack_time_diff, {"Acknowledgment Time", "tcpclv4.xfer_ack.time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     // XFER_REFUSE fields
     {&hf_xfer_refuse_reason, {"Reason", "tcpclv4.xfer_refuse.reason", FT_UINT8, BASE_DEC, VALS(xfer_refuse_reason_vals), 0x0, NULL, HFILL}},

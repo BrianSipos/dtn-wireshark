@@ -35,8 +35,8 @@ static int hf_aad_scope = -1;
 static int hf_aad_scope_primary = -1;
 static int hf_aad_scope_target = -1;
 static int hf_aad_scope_security = -1;
-static int hf_cose_x509 = -1;
-static int hf_cert = -1;
+static int hf_addl_protected = -1;
+static int hf_addl_unprotected = -1;
 static int hf_cose_msg = -1;
 /// Field definitions
 static hf_register_info fields[] = {
@@ -44,8 +44,8 @@ static hf_register_info fields[] = {
     {&hf_aad_scope_primary, {"Primary Block", "bpsec.cose.aad_scope.primary", FT_UINT8, BASE_DEC, NULL, HAS_PRIMARY_CTX, NULL, HFILL}},
     {&hf_aad_scope_target, {"Target Block", "bpsec.cose.aad_scope.target", FT_UINT8, BASE_DEC, NULL, HAS_TARGET_CTX, NULL, HFILL}},
     {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_UINT8, BASE_DEC, NULL, HAS_SECURITY_CTX, NULL, HFILL}},
-    {&hf_cose_x509, {"COSE Certificates", "bpsec.cose.x509", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_cert, {"PKIX Certificate", "bpsec.cose.cert", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_addl_protected, {"Additional Protected Headers (bstr)", "bpsec.cose.addl_proected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_addl_unprotected, {"Additional Unprotected Headers", "bpsec.cose.addl_unprotected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
@@ -57,12 +57,14 @@ static WS_FIELDTYPE aad_scope[] = {
 };
 
 static int ett_aad_scope = -1;
-static int ett_cose_x509 = -1;
+static int ett_addl_protected = -1;
+static int ett_addl_unprotected = -1;
 static int ett_cose_msg = -1;
 /// Tree structures
 static int *ett[] = {
     &ett_aad_scope,
-    &ett_cose_x509,
+    &ett_addl_protected,
+    &ett_addl_unprotected,
     &ett_cose_msg,
 };
 
@@ -80,38 +82,46 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
     return offset;
 }
 
-/** Dissector for CDDL type COSE_X509.
+/** Dissector for COSE protected header.
  */
-static int dissect_cose_x509(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
+static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    proto_item *item_list = proto_tree_add_item(tree, hf_cose_x509, tvb, 0, -1, ENC_NA);
-    proto_tree *tree_list = proto_item_add_subtree(item_list, ett_cose_x509);
+    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_protected, tvb, 0, -1, ENC_NA);
+    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_protected);
 
-    bp_cbor_chunk_t *head = cbor_require_array(tvb, pinfo, item_list, &offset);
-    const gint64 count = (head ? head->head_value : 0);
-    for (gint64 cert_ix = 0; cert_ix < count; ++cert_ix) {
-        bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-        tvbuff_t *tvb_data = cbor_require_string(tvb, chunk);
-        offset += chunk->data_length;
+    bp_cbor_chunk_t *head = bp_scan_cbor_chunk(tvb, offset);
+    offset += head->data_length;
+    tvbuff_t *tvb_data = cbor_require_string(tvb, head);
 
-        if (tvb_data) {
-            // disallow name rewrite
-            gchar *info_text = g_strdup(col_get_text(pinfo->cinfo, COL_INFO));
+    dissector_try_string(
+        dissect_media,
+        "application/cbor",
+        tvb_data,
+        pinfo,
+        tree_hdr,
+        NULL
+    );
 
-            dissector_try_string(
-                dissect_media,
-                "application/pkix-cert",
-                tvb_data,
-                pinfo,
-                tree_list,
-                NULL
-            );
+    return offset;
+}
 
-            col_add_str(pinfo->cinfo, COL_INFO, info_text);
-            g_free(info_text);
-        }
-    }
+/** Dissector for COSE unprotected header.
+ */
+static int dissect_addl_unprotected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
+    gint offset = 0;
+
+    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_unprotected, tvb, 0, -1, ENC_NA);
+    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_unprotected);
+
+    offset += dissector_try_string(
+        dissect_media,
+        "application/cbor",
+        tvb,
+        pinfo,
+        tree_hdr,
+        NULL
+    );
 
     return offset;
 }
@@ -165,8 +175,9 @@ static void proto_reg_handoff_bpsec_cose(void) {
 
     /* Packaged extensions */
     const gint64 ctxid = 99;
+#if 0
     {
-        dissector_handle_t hdl = create_dissector_handle(dissect_cose_msg, proto_bpsec_cose);
+        dissector_handle_t hdl = create_dissector_handle(dissect_cose_key, proto_bpsec_cose);
         {
             bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 1);
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
@@ -176,23 +187,21 @@ static void proto_reg_handoff_bpsec_cose(void) {
             dissector_add_custom_table_handle("bpsec.param", key, hdl);
         }
     }
+#endif
     {
-        dissector_handle_t hdl = create_dissector_handle(dissect_cose_x509, proto_bpsec_cose);
-        {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 3);
-            dissector_add_custom_table_handle("bpsec.param", key, hdl);
-        }
-        {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 4);
-            dissector_add_custom_table_handle("bpsec.param", key, hdl);
-        }
+        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 3);
+        dissector_handle_t hdl = create_dissector_handle(dissect_addl_protected, proto_bpsec_cose);
+        dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
     {
+        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 4);
+        dissector_handle_t hdl = create_dissector_handle(dissect_addl_unprotected, proto_bpsec_cose);
+        dissector_add_custom_table_handle("bpsec.param", key, hdl);
+    }
+    {
+        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 5);
         dissector_handle_t hdl = create_dissector_handle(dissect_param_scope, proto_bpsec_cose);
-        {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 5);
-            dissector_add_custom_table_handle("bpsec.param", key, hdl);
-        }
+        dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
     {
         dissector_handle_t hdl = create_dissector_handle(dissect_cose_msg, proto_bpsec_cose);

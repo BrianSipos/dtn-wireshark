@@ -446,8 +446,8 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
                     cbor_skip_next_item(tvb, &offset);
                     expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
 
-                    tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);
-                    offset += dissector_try_string(
+                    tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset - init_offset);
+                    dissector_try_string(
                         dissect_media,
                         "application/cbor",
                         tvb_item,
