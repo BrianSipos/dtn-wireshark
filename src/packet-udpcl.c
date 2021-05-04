@@ -14,16 +14,20 @@
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
+#else
+#include <config.h>
+#define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
+#define WIRESHARK_VERSION_MINOR VERSION_MINOR
+#endif
+
+#if defined(WIRESHARK_HAS_TLS)
 #include <epan/dissectors/packet-tls.h>
 #include <epan/dissectors/packet-tls-utils.h>
 #define DTLS_DISSECTOR_NAME "dtls"
 #else
-#include <config.h>
 #include <epan/dissectors/packet-ssl.h>
 #include <epan/dissectors/packet-ssl-utils.h>
 #define DTLS_DISSECTOR_NAME "dtls"
-#define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
-#define WIRESHARK_VERSION_MINOR VERSION_MINOR
 #endif
 
 #if defined(WIRESHARK_NEW_FLAGSPTR)

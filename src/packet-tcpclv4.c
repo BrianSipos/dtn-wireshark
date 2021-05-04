@@ -12,16 +12,20 @@
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
-#include <epan/dissectors/packet-tls.h>
-#include <epan/dissectors/packet-tls-utils.h>
-#define DTLS_DISSECTOR_NAME "tls"
 #else
 #include <config.h>
-#include <epan/dissectors/packet-ssl.h>
-#include <epan/dissectors/packet-ssl-utils.h>
-#define DTLS_DISSECTOR_NAME "ssl"
 #define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
+#endif
+
+#if defined(WIRESHARK_HAS_TLS)
+#include <epan/dissectors/packet-tls.h>
+#include <epan/dissectors/packet-tls-utils.h>
+#define TLS_DISSECTOR_NAME "tls"
+#else
+#include <epan/dissectors/packet-ssl.h>
+#include <epan/dissectors/packet-ssl-utils.h>
+#define TLS_DISSECTOR_NAME "ssl"
 #endif
 
 #if defined(WIRESHARK_NEW_FLAGSPTR)
@@ -1685,7 +1689,7 @@ static void proto_reg_handoff_tcpcl(void) {
 
     dissect_media = find_dissector_table("media_type");
 
-    handle_tls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_tcpcl);
+    handle_tls = find_dissector_add_dependency(TLS_DISSECTOR_NAME, proto_tcpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_tcpcl);
 
     /* Packaged extensions */

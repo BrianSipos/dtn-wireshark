@@ -1,6 +1,6 @@
 cmake_policy(VERSION 3.10)
 project(
-    tcpcl 
+    dtn-wireshark
     LANGUAGES C CXX
     VERSION 0.0
 )
@@ -25,9 +25,16 @@ endif()
 if(NOT WIRESHARK_VERSION VERSION_LESS "3.4")
     add_compile_definitions("WIRESHARK_NEW_FLAGSPTR")
 endif()
-if(NOT WIRESHARK_VERSION VERSION_LESS "3.0")
+include(CheckIncludeFile)
+set(CMAKE_REQUIRED_INCLUDES ${WIRESHARK_INCLUDE_DIRS})
+CHECK_INCLUDE_FILE("ws_version.h" WIRESHARK_HAS_VERSION_H)
+if(WIRESHARK_HAS_VERSION_H)
     add_compile_definitions("WIRESHARK_HAS_VERSION_H")
-endif()
+endif(WIRESHARK_HAS_VERSION_H)
+CHECK_INCLUDE_FILE("epan/dissectors/packet-tls.h" WIRESHARK_HAS_TLS)
+if(WIRESHARK_HAS_TLS)
+    add_compile_definitions("WIRESHARK_HAS_TLS")
+endif(WIRESHARK_HAS_TLS)
 
 pkg_get_variable(WIRESHARK_SYSTEM_PLUGINDIR wireshark plugindir)
 set(INSTALL_MODULE_PATH "${WIRESHARK_SYSTEM_PLUGINDIR}/epan" CACHE FILEPATH "path to install the plugin module")
