@@ -6,7 +6,6 @@
 #include <epan/tvbuff.h>
 #include <epan/proto.h>
 #include <epan/expert.h>
-#include <glib.h>
 
 /** Bundle CRC types.
  * Section 4.1.1.
@@ -103,11 +102,11 @@ typedef struct {
 
 /** Construct a new timestamp.
  */
-bp_creation_ts_t * bp_creation_ts_new();
+bp_creation_ts_t * bp_creation_ts_alloc(wmem_allocator_t *alloc);
 
 /** Function to match the GDestroyNotify signature.
  */
-void bp_creation_ts_delete(gpointer ptr);
+void bp_creation_ts_free(wmem_allocator_t *alloc, bp_creation_ts_t *obj);
 
 /** Function to match the GCompareDataFunc signature.
  */
@@ -137,11 +136,11 @@ typedef struct {
 
 /** Construct a new timestamp.
  */
-bp_eid_t * bp_eid_new();
+bp_eid_t * bp_eid_new(wmem_allocator_t *alloc);
 
 /** Function to match the GDestroyNotify signature.
  */
-void bp_eid_delete(gpointer ptr);
+void bp_eid_free(wmem_allocator_t *alloc, bp_eid_t *obj);
 
 /** Function to match the GCompareFunc signature.
  */
@@ -185,11 +184,11 @@ typedef struct {
 
 /** Construct a new object on the file allocator.
  */
-bp_block_primary_t * bp_block_primary_new();
+bp_block_primary_t * bp_block_primary_new(wmem_allocator_t *alloc);
 
 /** Function to match the GDestroyNotify signature.
  */
-void bp_block_primary_delete(gpointer ptr);
+void bp_block_primary_free(wmem_allocator_t *alloc, bp_block_primary_t *obj);
 
 typedef struct {
     /// The index of the block within the bundle.
@@ -221,11 +220,9 @@ typedef struct {
  * @param index The index of the block within the bundle.
  * The canonical index is always greater than zero.
  */
-bp_block_canonical_t * bp_block_canonical_new(guint64 index);
+bp_block_canonical_t * bp_block_canonical_new(wmem_allocator_t *alloc, guint64 index);
 
-/** Function to match the GDestroyNotify signature.
- */
-void bp_block_canonical_delete(gpointer ptr);
+void bp_block_canonical_delete(wmem_allocator_t *alloc, bp_block_canonical_t *obj);
 
 /// Identification of an individual bundle
 typedef struct {
@@ -241,11 +238,9 @@ typedef struct {
 
 /** Construct a new object on the file allocator.
  */
-bp_bundle_ident_t * bp_bundle_ident_new(bp_eid_t *src, bp_creation_ts_t *ts, guint64 *off, guint64 *len);
+bp_bundle_ident_t * bp_bundle_ident_new(wmem_allocator_t *alloc, bp_eid_t *src, bp_creation_ts_t *ts, guint64 *off, guint64 *len);
 
-/** Function to match the GDestroyNotify signature.
- */
-void bp_bundle_ident_delete(gpointer ptr);
+void bp_bundle_ident_free(wmem_allocator_t *alloc, bp_bundle_ident_t *obj);
 
 /** Function to match the GCompareFunc signature.
  */
@@ -266,43 +261,44 @@ typedef struct {
     /// Required primary block
     bp_block_primary_t *primary;
     /// Additional blocks in order (type bp_block_canonical_t)
-    GSequence *blocks;
+    wmem_list_t *blocks;
     /// Map from block number (guint64) to pointer to block of that number
     /// (bp_block_canonical_t owned by #blocks)
-    GHashTable *block_nums;
-    /// Map from block type code (guint64) to sequence (GPtrArray) of
+    wmem_map_t *block_nums;
+    /// Map from block type code (guint64) to sequence (wmem_list_t) of
     /// pointers to block of that type (bp_block_canonical_t owned by #blocks)
-    GHashTable *block_types;
+    wmem_map_t *block_types;
 } bp_bundle_t;
 
 /** Construct a new object on the file allocator.
  */
-bp_bundle_t * bp_bundle_new();
+bp_bundle_t * bp_bundle_new(wmem_allocator_t *alloc);
 
 /** Function to match the GDestroyNotify signature.
  */
-void bp_bundle_delete(gpointer ptr);
+void bp_bundle_free(wmem_allocator_t *alloc, bp_bundle_t *obj);
 
 /** Extract an Endpoint ID.
  *
  * @param tree The tree to write items under.
  * @param hfindex The root item field.
+ * @param hfindex_uri The reassembled URI item field.
  * @param pinfo Packet info to update.
  * @param tvb Buffer to read from.
  * @param[in,out] offset Starting offset within @c tvb.
  * @param[out] eid If non-null, the EID to write to.
  * @return The new tree item.
  */
-proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_eid_t *eid);
+proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_uri, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_eid_t *eid);
 
 /// Metadata for an entire file
 typedef struct {
     /// Map from a bundle ID (bp_bundle_ident_t) to bundle (bp_bundle_t)
-    GHashTable *bundles;
+    wmem_map_t *bundles;
     /// Map from subject bundle ID (bp_bundle_ident_t) to
-    /// map of references (bp_bundle_ident_t) of status bundles to NULL
+    /// map from references (bp_bundle_ident_t) of status bundles to NULL
     /// i.e. a set
-    GHashTable *admin_status;
+    wmem_map_t *admin_status;
 } bp_history_t;
 
 /** Data supplied to each block sub-dissector.

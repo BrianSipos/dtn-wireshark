@@ -176,11 +176,6 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
     proto_tree *tree_asb = proto_item_add_subtree(item_asb, ett_asb);
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk_asb = cbor_require_array_with_size(tvb, pinfo, tree_asb, &offset, 4, 6);
-    if (!chunk_asb) {
-        return offset;
-    }
-
     GArray *targets;
     targets = g_array_new(FALSE, FALSE, sizeof(guint64));
 
@@ -367,7 +362,6 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
     bp_cbor_require_delete(flags);
 
     proto_item_set_len(item_asb, offset);
-    bp_cbor_chunk_delete(chunk_asb);
     return offset;
 }
 

@@ -216,8 +216,11 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
     proto_item *item_udpcl = proto_tree_get_parent(tree_udpcl);
     proto_item *tree = proto_tree_get_root(tree_udpcl);
 
+    // Peek at first octet
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
-    bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, 0);
+    bp_cbor_chunk_t *first_head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &sublen);
+    sublen = 0;
+
     if (first_octet == 0x06) {
         col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle v6");
         proto_item_append_text(item_udpcl, ", Bundle v6");
@@ -263,7 +266,6 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
         proto_item_append_text(item_udpcl, ", Non-bundle data");
         expert_add_info(pinfo, item_udpcl, &ei_non_bundle_data);
     }
-    bp_cbor_chunk_delete(first_head);
     return sublen;
 }
 
@@ -275,35 +277,27 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, -1, ENC_NA);
     proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
 
-    bp_cbor_chunk_t *chunk_xfer = cbor_require_array_with_size(tvb, pinfo, item_xfer, &offset, 4, 4);
+    bp_cbor_chunk_t *chunk_xfer = cbor_read_head_array_with_size(wmem_packet_scope(), tvb, pinfo, item_xfer, &offset, 4, 4);
     if (!chunk_xfer) {
         proto_item_set_len(item_xfer, offset);
         return offset;
     }
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_id = cbor_require_uint64(chunk);
+    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_id = cbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_id, pinfo, tvb, chunk, xfer_id);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_tot_len = cbor_require_uint64(chunk);
+    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_tot_len = cbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_frag_offset = cbor_require_uint64(chunk);
+    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_frag_offset = cbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
+    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     tvbuff_t *xfer_fragment = cbor_require_string(tvb, chunk);
     proto_tree_add_cbor_string(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
-    bp_cbor_chunk_delete(chunk);
 
     if (udpcl_desegment_transfer
         && xfer_id && xfer_tot_len && xfer_frag_offset && xfer_fragment) {
@@ -384,11 +378,9 @@ static int dissect_return_accept(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item *item_rtn = proto_tree_add_item(tree_ext_item, hf_ext_rtn, tvb, offset, -1, ENC_NA);
     proto_tree *tree_rtn = proto_item_add_subtree(item_rtn, ett_ext_rtn);
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *interval = cbor_require_uint64(chunk);
+    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *interval = cbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_rtn, hf_rtn_interval, pinfo, tvb, chunk, interval);
-    bp_cbor_chunk_delete(chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
     proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);
@@ -405,10 +397,8 @@ static int dissect_nodeid(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ex
     proto_item *item_nodeid = proto_tree_add_item(tree_ext_item, hf_ext_nodeid, tvb, offset, -1, ENC_NA);
     proto_tree *tree_nodeid = proto_item_add_subtree(item_nodeid, ett_ext_nodeid);
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
+    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     proto_tree_add_cbor_string(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
-    bp_cbor_chunk_delete(chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
     proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);
@@ -423,7 +413,7 @@ static int dissect_starttls(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     gint offset = 0;
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Initiate DTLS");
 
-    cbor_skip_next_item(tvb, &offset);
+    cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
     // no real value
     proto_tree_add_item(tree_ext_item, hf_ext_starttls, tvb, 0, offset, ENC_NA);
 
@@ -447,9 +437,10 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
     proto_tree *tree_udpcl = proto_item_add_subtree(item_udpcl, ett_udpcl);
 
     while ((guint)offset < buflen) {
-        // Initial octet snooping
+        // Peek at first octet
         const guint8 first_octet = tvb_get_guint8(tvb, offset);
-        bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, offset);
+        bp_cbor_chunk_t *first_head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        offset -= first_head->data_length;
 
         if (first_octet == 0x00) {
             col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Padding");
@@ -480,15 +471,14 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             proto_tree *tree_ext_map = proto_item_add_subtree(item_ext_map, ett_ext_map);
 
             for (gint64 ix = 0; ix < count; ++ix) {
-                bp_cbor_chunk_t *key_chunk = bp_scan_cbor_chunk(tvb, offset);
-                offset += key_chunk->data_length;
-                gint64 *key = cbor_require_int64(key_chunk);
+                bp_cbor_chunk_t *key_chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                gint64 *key = cbor_require_int64(wmem_packet_scope(), key_chunk);
                 proto_item *item_ext_item = proto_tree_add_cbor_int64(tree_ext_map, hf_ext_id, pinfo, tvb, key_chunk, key);
                 proto_tree *tree_ext_item = proto_item_add_subtree(item_ext_item, ett_ext_item);
-                bp_cbor_chunk_delete(key_chunk);
 
+                // Skip the item to detect its length for subset TVB
                 const guint init_offset = offset;
-                cbor_skip_next_item(tvb, &offset);
+                cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 if (!key) {
                     continue;
                 }
@@ -505,8 +495,6 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
                         NULL
                     );
                 }
-
-                bp_cbor_require_delete(key);
             }
             proto_item_set_len(item_ext_map, offset);
 
@@ -517,7 +505,6 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             offset += dissect_bundle(tvb, pinfo, tree_udpcl);
             proto_item_set_len(item_udpcl, 0);
         }
-        bp_cbor_chunk_delete(first_head);
     }
 
     return offset;
