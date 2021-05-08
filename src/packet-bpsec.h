@@ -30,7 +30,7 @@ bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 typ
 
 /** Function to match the GDestroyNotify signature.
  */
-void bpsec_id_delete(wmem_allocator_t *alloc, gpointer ptr);
+void bpsec_id_free(wmem_allocator_t *alloc, gpointer ptr);
 
 /** Function to match the GCompareFunc signature.
  */

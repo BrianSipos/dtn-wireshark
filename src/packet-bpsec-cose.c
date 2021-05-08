@@ -73,11 +73,9 @@ static int *ett[] = {
 static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk_flags = bp_scan_cbor_chunk(tvb, offset);
-    guint64 *flags = cbor_require_uint64(chunk_flags);
+    bp_cbor_chunk_t *chunk_flags = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *flags = cbor_require_uint64(wmem_packet_scope(), chunk_flags);
     proto_tree_add_cbor_bitmask(tree, hf_aad_scope, ett_aad_scope, aad_scope, pinfo, tvb, chunk_flags, flags);
-    offset += chunk_flags->data_length;
-    bp_cbor_chunk_delete(chunk_flags);
 
     return offset;
 }
@@ -90,8 +88,7 @@ static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_protected, tvb, 0, -1, ENC_NA);
     proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_protected);
 
-    bp_cbor_chunk_t *head = bp_scan_cbor_chunk(tvb, offset);
-    offset += head->data_length;
+    bp_cbor_chunk_t *head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     tvbuff_t *tvb_data = cbor_require_string(tvb, head);
 
     dissector_try_string(
@@ -131,9 +128,8 @@ static int dissect_addl_unprotected(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, 0);
+    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     tvbuff_t *tvb_data = cbor_require_string(tvb, chunk);
-    offset += chunk->data_length;
 
     proto_item *item_msg = proto_tree_add_item(tree, hf_cose_msg, tvb, 0, offset, ENC_NA);
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);

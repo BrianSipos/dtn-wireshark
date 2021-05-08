@@ -279,6 +279,7 @@ bp_bundle_t * bp_bundle_new(wmem_allocator_t *alloc);
 void bp_bundle_free(wmem_allocator_t *alloc, bp_bundle_t *obj);
 
 /** Extract an Endpoint ID.
+ * All EID fields are allocated with wmem_file_scope().
  *
  * @param tree The tree to write items under.
  * @param hfindex The root item field.

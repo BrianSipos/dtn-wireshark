@@ -492,9 +492,7 @@ bp_eid_t * bp_eid_new(wmem_allocator_t *alloc) {
 }
 
 void bp_eid_free(wmem_allocator_t *alloc, bp_eid_t *obj) {
-    wmem_free(alloc, (char *)(obj->uri));
     wmem_free(alloc, (char *)(obj->dtn_wkssp));
-//    file_scope_delete((char *)(obj->node_name));
     wmem_free(alloc, (char *)(obj->dtn_serv));
     wmem_free(alloc, obj);
 }
@@ -633,6 +631,7 @@ static nstime_t dtn_to_utctime(const gint64 dtntime) {
 }
 
 proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_uri, packet_info *pinfo, tvbuff_t *tvb, gint *offset, bp_eid_t *eid) {
+    wmem_allocator_t *alloc_eid = wmem_file_scope();
     proto_item *item_eid = proto_tree_add_item(tree, hfindex, tvb, *offset, -1, ENC_NA);
     proto_tree *tree_eid = proto_item_add_subtree(item_eid, ett_eid);
     const gint eid_start = *offset;
@@ -644,14 +643,14 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
     }
 
     chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    const guint64 *scheme = cbor_require_uint64(wmem_file_scope(), chunk);
+    const guint64 *scheme = cbor_require_uint64(alloc_eid, chunk);
     proto_item *item_scheme = proto_tree_add_cbor_uint64(tree_eid, hf_eid_scheme, pinfo, tvb, chunk, scheme);
     if (!scheme) {
         cbor_skip_next_item(wmem_packet_scope(), tvb, offset);
         return item_eid;
     }
 
-    wmem_strbuf_t *uribuf = wmem_strbuf_new(wmem_file_scope(), NULL);
+    wmem_strbuf_t *uribuf = wmem_strbuf_new(alloc_eid, NULL);
     const char *dtn_wkssp = NULL;
     const char *dtn_serv = NULL;
     switch (*scheme) {
@@ -664,7 +663,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
 
                     switch (*ssp_code) {
                         case 0:
-                            dtn_wkssp = wmem_strdup(wmem_file_scope(), "none");
+                            dtn_wkssp = wmem_strdup(alloc_eid, "none");
                             break;
                         default:
                             expert_add_info(pinfo, item, &ei_cbor_wrong_type);
@@ -684,11 +683,11 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
 
                     char *path_sep;
                     if ((path_sep = strrchr(ssp, '/')) != NULL) {
-                        dtn_serv = wmem_strdup(wmem_file_scope(), path_sep + 1);
+                        dtn_serv = wmem_strdup(alloc_eid, path_sep + 1);
                     }
                     else {
                         // no separator also means no authority part, so it's well-known
-                        dtn_wkssp = wmem_strdup(wmem_file_scope(), ssp);
+                        dtn_wkssp = wmem_strdup(alloc_eid, ssp);
                     }
 
                     wmem_free(wmem_packet_scope(), ssp);
@@ -745,9 +744,6 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
 
         proto_item_append_text(item_eid, ": %s", uri);
     }
-    else {
-        wmem_free(wmem_file_scope(), uribuf);
-    }
 
     if (eid) {
         eid->scheme = (scheme ? *scheme : 0);
@@ -785,9 +781,8 @@ static void proto_tree_add_dtn_time(proto_tree *tree, int hfindex, packet_info *
                 proto_item *item_utctime = proto_tree_add_time(tree_time, hf_time_utctime, tvb, chunk->start, chunk->data_length, &utctime);
                 PROTO_ITEM_SET_GENERATED(item_utctime);
 
-                gchar *time_text = abs_time_to_str(wmem_file_scope(), &utctime, ABSOLUTE_TIME_UTC, TRUE);
+                gchar *time_text = abs_time_to_str(wmem_packet_scope(), &utctime, ABSOLUTE_TIME_UTC, TRUE);
                 proto_item_append_text(item_time, ": %s", time_text);
-                file_scope_delete(time_text);
 
                 if (out) {
                     out->utctime = utctime;
@@ -1429,11 +1424,10 @@ static gboolean proto_tree_add_status_assertion(proto_tree *tree, int hfassert, 
     }
 
     bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    gboolean *status_val = cbor_require_boolean(wmem_file_scope(), chunk);
+    gboolean *status_val = cbor_require_boolean(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_boolean(tree_assert, hf_status_assert_val, pinfo, tvb, chunk, status_val);
     if (status_val) {
         result = *status_val;
-        file_scope_delete(status_val);
     }
 
     if (head->head_value > 1) {
