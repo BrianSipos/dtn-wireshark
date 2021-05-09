@@ -37,7 +37,7 @@
 /// Glib logging "domain" name
 static const char *LOG_DOMAIN = "tcpclv4";
 /// Protocol column name
-const char *const proto_name_tcpcl = "TCPCLv4";
+static const char *const proto_name_tcpcl = "TCPCLv4";
 
 /// Protocol preferences and defaults
 static const guint TCPCL_PORT_NUM = 4556;

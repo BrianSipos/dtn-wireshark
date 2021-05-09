@@ -96,7 +96,7 @@ TEST_F(TestBpCbor, testDecodeHead4) {
 TEST_F(TestBpCbor, testSkipItem) {
     auto store = TvbStore::fromHex("82626869190D4801");
     gint offset = 0;
-    auto indef = cbor_skip_next_item(_alloc, store.tvb, &offset);
+    auto indef = bp_cbor_skip_next_item(_alloc, store.tvb, &offset);
     EXPECT_EQ(FALSE, indef);
     EXPECT_EQ(7, offset);
 }

@@ -39,7 +39,7 @@
 /// Glib logging "domain" name
 static const char *LOG_DOMAIN = "udpcl";
 /// Protocol column name
-const char *const proto_name_udpcl = "UDPCL";
+static const char *const proto_name_udpcl = "UDPCL";
 
 /// Protocol preferences and defaults
 static const guint UDPCL_PORT_NUM = 4556;
@@ -277,8 +277,9 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, -1, ENC_NA);
     proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
 
-    bp_cbor_chunk_t *chunk_xfer = cbor_read_head_array_with_size(wmem_packet_scope(), tvb, pinfo, item_xfer, &offset, 4, 4);
-    if (!chunk_xfer) {
+    bp_cbor_chunk_t *chunk_xfer = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    cbor_require_array_size(chunk_xfer, 4, 4);
+    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_xfer)) {
         proto_item_set_len(item_xfer, offset);
         return offset;
     }
@@ -413,7 +414,7 @@ static int dissect_starttls(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     gint offset = 0;
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Initiate DTLS");
 
-    cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+    bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
     // no real value
     proto_tree_add_item(tree_ext_item, hf_ext_starttls, tvb, 0, offset, ENC_NA);
 
@@ -478,7 +479,7 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
 
                 // Skip the item to detect its length for subset TVB
                 const guint init_offset = offset;
-                cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 if (!key) {
                     continue;
                 }

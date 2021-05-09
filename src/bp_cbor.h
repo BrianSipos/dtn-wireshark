@@ -73,17 +73,37 @@ typedef enum {
     CBOR_CTRL_UNDEF = 23
 } _cbor_ctrl;
 
+/// Decoding or require_* error
+typedef struct {
+    /// The associated expert info
+    expert_field *ei;
+    /// Optional specific text
+    const char *msg;
+} bp_cbor_error_t;
+
+/** Construct a new error object.
+ *
+ * @param alloc The allocator to use.
+ * @param ei The specific error type.
+ * @param format If non-NULL, a message format string.
+ * @return The new object.
+ */
+bp_cbor_error_t * bp_cbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...);
+
 /// A data-containing, optionally-tagged chunk of CBOR
 typedef struct {
+    /// The allocator used for #errors and #tags
+    wmem_allocator_t *_alloc;
+
     /// The start offset of this chunk
     gint start;
     /// The length of just this header any any preceding tags
     gint head_length;
     /// The length of this chunk and its immediate definite data (i.e. strings)
     gint data_length;
-    /// Additional blocks in order (type expert_field*)
+    /// Errors processing this chunk (type bp_cbor_error_t*)
     wmem_list_t *errors;
-    /// Additional blocks in order (type guint64)
+    /// Tags on this chunk, in encoded order (type guint64*)
     wmem_list_t *tags;
 
     /// Major type of this block.
@@ -103,61 +123,84 @@ typedef struct {
  * @param tvb The TVB to read from.
  * @param[in,out] offset The offset with in @c tvb.
  * @return The chunk of data found, including any errors.
+ * This never returns NULL.
  */
 bp_cbor_chunk_t * bp_cbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
 
+/** Free a chunk and its lists.
+ */
+void bp_cbor_chunk_free(bp_cbor_chunk_t *chunk);
+
+/** After both reading and decoding a chunk, report on any errors found.
+ * @param pinfo The associated packet.
+ * @param item The associated tree item.
+ * @param chunk The chunk with possible errors.
+ */
 void bp_cbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const bp_cbor_chunk_t *chunk);
 
-/** Function to match the GDestroyNotify signature.
+/** Determine if a chunk has errors.
+ * @param chunk The chunk with possible errors.
+ * @return The error count.
  */
-void bp_cbor_chunk_free(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
+guint64 bp_cbor_has_errors(const bp_cbor_chunk_t *chunk);
 
 /** Determine if an indefinite break is present.
  *
  * @param chunk The chunk to check.
  * @return True if it's an indefinite break.
  */
-gboolean cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk);
+gboolean bp_cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk);
 
 /** Recursively skip items from a stream.
  *
+ * @param alloc The allocator to use.
  * @param tvb The data buffer.
- * @param offset The initial offset to read and skip over.
+ * @param[in,out] offset The initial offset to read and skip over.
  * @return True if the skipped item was an indefinite break.
  */
-gboolean cbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
+gboolean bp_cbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
+
+/** Skip over an item if a chunk has errors.
+ *
+ * @param alloc The allocator to use.
+ * @param tvb The data buffer.
+ * @param[in,out] offset The initial offset to read and skip over.
+ * @param chunk The chunk with possible errors.
+ * @return True if there were errors and the item skipped.
+ */
+gboolean bp_cbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset, const bp_cbor_chunk_t *chunk);
+
+
+/** Require a specific item major type.
+ *
+ * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param major The required major type.
+ * @return True if the item is that type.
+ */
+gboolean cbor_require_major_type(bp_cbor_chunk_t *chunk, cbor_type major);
 
 /** Require an array item.
  *
- * @return The array head chunk or NULL.
+ * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @return True if the item is an array.
  */
-bp_cbor_chunk_t * cbor_read_head_array(wmem_allocator_t *alloc, tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset);
+gboolean cbor_require_array(bp_cbor_chunk_t *chunk);
 
-/** Make some assertions about a CBOR array.
+/** Require an array have a specific ranged size.
  *
- * @param[in,out] offset The starting offset within @c tvb.
- * @param count_read The number of items read so far.
- * @param count_min The minimum required array size.
- * @param count_max The maximum required array size.
- * @return The array header chunk, if the array is valid.
- * The chunk can be deleted with bp_cbor_chunk_delete().
+ * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param count_min The minimum acceptable size.
+ * @param count_max The maximum acceptable size.
+ * @return True if the size is acceptable.
  */
-bp_cbor_chunk_t * cbor_read_head_array_with_size(wmem_allocator_t *alloc, tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset, guint64 count_min, guint64 count_max);
+gboolean cbor_require_array_size(bp_cbor_chunk_t *chunk, guint64 count_min, guint64 count_max);
 
 /** Require a map item.
  *
- * @return The array head chunk or NULL.
+ * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @return True if the item is a map.
  */
-bp_cbor_chunk_t * cbor_read_head_map(wmem_allocator_t *alloc, tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset);
-
-
-/** Require a known array have a specific ranged size.
- *
- * @param count_min The minimum acceptable size.
- * @param count_max The maximum acceptable size.
- * @return The true if the size is acceptable.
- */
-gboolean cbor_require_array_size(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, const bp_cbor_chunk_t *head, guint64 count_min, guint64 count_max);
+gboolean cbor_require_map(bp_cbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a boolean value.
  *
@@ -165,7 +208,7 @@ gboolean cbor_require_array_size(tvbuff_t *tvb, packet_info *pinfo, proto_item *
  * @return Pointer to the boolean value, if the item was boolean.
  * The value can be deleted with bp_cbor_require_delete().
  */
-gboolean * cbor_require_boolean(wmem_allocator_t *alloc, const bp_cbor_chunk_t *chunk);
+gboolean * cbor_require_boolean(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
 
 /** Require a CBOR item to have an unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
@@ -174,7 +217,7 @@ gboolean * cbor_require_boolean(wmem_allocator_t *alloc, const bp_cbor_chunk_t *
  * @return Pointer to the boolean value, if the item was an integer.
  * The value can be deleted with bp_cbor_require_delete().
  */
-guint64 * cbor_require_uint64(wmem_allocator_t *alloc, const bp_cbor_chunk_t *chunk);
+guint64 * cbor_require_uint64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
 
 /** Require a CBOR item to have an signed- or unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
@@ -183,7 +226,7 @@ guint64 * cbor_require_uint64(wmem_allocator_t *alloc, const bp_cbor_chunk_t *ch
  * @return Pointer to the value, if the item was an integer.
  * The value can be deleted with bp_cbor_require_delete().
  */
-gint64 * cbor_require_int64(wmem_allocator_t *alloc, const bp_cbor_chunk_t *chunk);
+gint64 * cbor_require_int64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a text- or byte-string value.
  *
@@ -192,7 +235,10 @@ gint64 * cbor_require_int64(wmem_allocator_t *alloc, const bp_cbor_chunk_t *chun
  * @return Pointer to the value, if the item was an string.
  * The value is memory managed by wireshark.
  */
-tvbuff_t * cbor_require_string(tvbuff_t *parent, const bp_cbor_chunk_t *chunk);
+tvbuff_t * cbor_require_string(tvbuff_t *parent, bp_cbor_chunk_t *chunk);
+
+
+proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
 
 proto_item * proto_tree_add_cbor_boolean(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gboolean *value);
 

@@ -51,18 +51,18 @@ static int hf_asb_result_id = -1;
 static hf_register_info fields[] = {
     {&hf_bib, {"BPSec Block Integrity Block", "bpsec.bib", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bcb, {"BPSec Block Confidentiality Block", "bpsec.bcb", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_target_list, {"Security Targets, Count", "bpsec.asb.target_count", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_asb_target_list, {"Security Targets, Count", "bpsec.asb.target_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_target, {"Target Block Number", "bpsec.asb.target", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_ctxid, {"Context ID", "bpsec.asb.ctxid", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags, {"Flags", "bpv7.asb.flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags_has_params, {"Parameters Present", "bpv7.asb.flags.has_params", FT_UINT8, BASE_DEC, NULL, ASB_HAS_PARAMS, NULL, HFILL}},
     {&hf_asb_secsrc_nodeid, {"Security Source", "bpsec.asb.secsrc.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_secsrc_uri, {"Security Source URI", "bpsec.asb.secsrc.uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_param_list, {"Security Parameters, Count", "bpsec.asb.param_count", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_asb_param_list, {"Security Parameters, Count", "bpsec.asb.param_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_pair, {"Parameter", "bpsec.asb.param", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_id, {"Type ID", "bpsec.asb.param.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_result_all_list, {"Security Result Targets, Count", "bpsec.asb.result_count", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_result_tgt_list, {"Security Results, Count", "bpsec.asb.result_count", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_asb_result_all_list, {"Security Result Targets, Count", "bpsec.asb.result_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_asb_result_tgt_list, {"Security Results, Count", "bpsec.asb.result_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_result_pair, {"Result", "bpsec.asb.result", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_result_id, {"Type ID", "bpsec.asb.result.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
 };
@@ -181,10 +181,10 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
     wmem_array_t *targets;
     targets = wmem_array_new(wmem_packet_scope(), sizeof(guint64));
 
-    const gint offset_tgt_list = offset;
-    bp_cbor_chunk_t *chunk_tgt_list = cbor_read_head_array(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset);
-    if (chunk_tgt_list) {
-        proto_item *item_tgt_list = proto_tree_add_int64(tree_asb, hf_asb_target_list, tvb, offset_tgt_list, 0, chunk_tgt_list->head_value);
+    bp_cbor_chunk_t *chunk_tgt_list = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    cbor_require_array(chunk_tgt_list);
+    proto_item *item_tgt_list = proto_tree_add_cbor_container(tree_asb, hf_asb_target_list, pinfo, tvb, chunk_tgt_list);
+    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_tgt_list)) {
         proto_tree *tree_tgt_list = proto_item_add_subtree(item_tgt_list, ett_tgt_list);
 
         bp_cbor_chunk_t *chunk_tgt = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
@@ -208,7 +208,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 
         }
 
-        proto_item_set_len(item_tgt_list, offset - offset_tgt_list);
+        proto_item_set_len(item_tgt_list, offset - chunk_tgt_list->start);
     }
 
     bp_cbor_chunk_t *chunk_ctxid = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
@@ -236,18 +236,18 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
     }
 
     if (flags && (*flags & ASB_HAS_PARAMS)) {
-        const gint offset_param_list = offset;
-        bp_cbor_chunk_t *chunk_param_list = cbor_read_head_array(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset);
-        if (chunk_param_list) {
-            proto_item *item_param_list = proto_tree_add_int64(tree_asb, hf_asb_param_list, tvb, offset_param_list, 0, chunk_param_list->head_value);
+        bp_cbor_chunk_t *chunk_param_list = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        cbor_require_array(chunk_param_list);
+        proto_item *item_param_list = proto_tree_add_cbor_container(tree_asb, hf_asb_param_list, pinfo, tvb, chunk_param_list);
+        if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_param_list)) {
             proto_tree *tree_param_list = proto_item_add_subtree(item_param_list, ett_param_list);
 
             // iterate all parameters
             for (guint64 param_ix = 0; param_ix < chunk_param_list->head_value; ++param_ix) {
-                const gint offset_param_pair = offset;
-                bp_cbor_chunk_t *chunk_param_pair = cbor_read_head_array_with_size(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset, 2, 2);
-                if (chunk_param_pair) {
-                    proto_item *item_param_pair = proto_tree_add_item(tree_param_list, hf_asb_param_pair, tvb, offset_param_pair, -1, ENC_NA);
+                bp_cbor_chunk_t *chunk_param_pair = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                cbor_require_array_size(chunk_param_pair, 2, 2);
+                proto_item *item_param_pair = proto_tree_add_cbor_container(tree_param_list, hf_asb_param_pair, pinfo, tvb, chunk_param_pair);
+                if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_param_pair)) {
                     proto_tree *tree_param_pair = proto_item_add_subtree(item_param_pair, ett_param_pair);
 
                     bp_cbor_chunk_t *chunk_paramid = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
@@ -258,7 +258,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                     }
 
                     const gint offset_value = offset;
-                    cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                    bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                     tvbuff_t *tvb_value = tvb_new_subset_length(tvb, offset_value, offset - offset_value);
 
                     dissector_handle_t value_dissect = NULL;
@@ -269,30 +269,29 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                     }
                     dissect_value(value_dissect, paramid, tvb_value, pinfo, tree_param_pair);
 
-                    proto_item_set_len(item_param_pair, offset - offset_param_pair);
+                    proto_item_set_len(item_param_pair, offset - chunk_param_pair->start);
                 }
             }
 
-            proto_item_set_len(item_param_list, offset - offset_param_list);
+            proto_item_set_len(item_param_list, offset - chunk_param_list->start);
         }
     }
 
-    const gint offset_result_all_list = offset;
-    bp_cbor_chunk_t *chunk_result_all_list = cbor_read_head_array(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset);
-    if (chunk_result_all_list) {
-        proto_item *item_result_all_list = proto_tree_add_int64(tree_asb, hf_asb_result_all_list, tvb, offset_result_all_list, 0, chunk_result_all_list->head_value);
-        proto_tree *tree_result_all_list = proto_item_add_subtree(item_result_all_list, ett_result_all_list);
+    // array sizes should agree
+    const guint tgt_size = wmem_array_get_count(targets);
 
-        // array sizes should agree
-        const guint tgt_size = wmem_array_get_count(targets);
-        cbor_require_array_size(tvb, pinfo, item_result_all_list, chunk_result_all_list, tgt_size, tgt_size);
+    bp_cbor_chunk_t *chunk_result_all_list = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    cbor_require_array_size(chunk_result_all_list, tgt_size, tgt_size);
+    proto_item *item_result_all_list = proto_tree_add_cbor_container(tree_asb, hf_asb_result_all_list, pinfo, tvb, chunk_result_all_list);
+    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_result_all_list)) {
+        proto_tree *tree_result_all_list = proto_item_add_subtree(item_result_all_list, ett_result_all_list);
 
         // iterate each target's results
         for (guint64 tgt_ix = 0; tgt_ix < chunk_result_all_list->head_value; ++tgt_ix) {
-            const gint offset_result_tgt_list = offset;
-            bp_cbor_chunk_t *chunk_result_tgt_list = cbor_read_head_array(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset);
-            if (chunk_result_tgt_list) {
-                proto_item *item_result_tgt_list = proto_tree_add_int64(tree_result_all_list, hf_asb_result_tgt_list, tvb, offset_result_tgt_list, 0, chunk_result_tgt_list->head_value);
+            bp_cbor_chunk_t *chunk_result_tgt_list = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            cbor_require_array(chunk_result_tgt_list);
+            proto_item *item_result_tgt_list = proto_tree_add_cbor_container(tree_result_all_list, hf_asb_result_tgt_list, pinfo, tvb, chunk_result_tgt_list);
+            if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_result_tgt_list)) {
                 proto_tree *tree_result_tgt_list = proto_item_add_subtree(item_result_tgt_list, ett_result_tgt_list);
 
                 // Hint at the associated target number
@@ -304,10 +303,10 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
 
                 // iterate all results for this target
                 for (guint64 result_ix = 0; result_ix < chunk_result_tgt_list->head_value; ++result_ix) {
-                    const gint offset_result_pair = offset;
-                    bp_cbor_chunk_t *chunk_result_pair = cbor_read_head_array_with_size(wmem_packet_scope(), tvb, pinfo, tree_asb, &offset, 2, 2);
-                    if (chunk_result_pair) {
-                        proto_item *item_result_pair = proto_tree_add_item(tree_result_tgt_list, hf_asb_result_pair, tvb, offset_result_pair, -1, ENC_NA);
+                    bp_cbor_chunk_t *chunk_result_pair = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                    cbor_require_array_size(chunk_result_pair, 2, 2);
+                    proto_item *item_result_pair = proto_tree_add_cbor_container(tree_result_tgt_list, hf_asb_result_pair, pinfo, tvb, chunk_result_pair);
+                    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_result_pair)) {
                         proto_tree *tree_result_pair = proto_item_add_subtree(item_result_pair, ett_result_pair);
 
                         bp_cbor_chunk_t *chunk_resultid = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
@@ -318,7 +317,7 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                         }
 
                         const gint offset_value = offset;
-                        cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                        bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                         tvbuff_t *tvb_value = tvb_new_subset_length(tvb, offset_value, offset - offset_value);
 
                         dissector_handle_t value_dissect = NULL;
@@ -329,15 +328,15 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
                         }
                         dissect_value(value_dissect, resultid, tvb_value, pinfo, tree_result_pair);
 
-                        proto_item_set_len(item_result_pair, offset - offset_result_pair);
+                        proto_item_set_len(item_result_pair, offset - chunk_result_pair->start);
                     }
                 }
 
-                proto_item_set_len(item_result_tgt_list, offset - offset_result_tgt_list);
+                proto_item_set_len(item_result_tgt_list, offset - chunk_result_tgt_list->start);
             }
         }
 
-        proto_item_set_len(item_result_all_list, offset - offset_result_all_list);
+        proto_item_set_len(item_result_all_list, offset - chunk_result_all_list->start);
     }
 
     proto_item_set_len(item_asb, offset);
