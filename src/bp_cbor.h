@@ -204,6 +204,7 @@ gboolean cbor_require_map(bp_cbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a boolean value.
  *
+ * @param alloc The allocator to use.
  * @param chunk The chunk to read from.
  * @return Pointer to the boolean value, if the item was boolean.
  * The value can be deleted with bp_cbor_require_delete().
@@ -213,6 +214,7 @@ gboolean * cbor_require_boolean(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk)
 /** Require a CBOR item to have an unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
  *
+ * @param alloc The allocator to use.
  * @param chunk The chunk to read from.
  * @return Pointer to the boolean value, if the item was an integer.
  * The value can be deleted with bp_cbor_require_delete().
@@ -222,23 +224,41 @@ guint64 * cbor_require_uint64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
 /** Require a CBOR item to have an signed- or unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
  *
+ * @param alloc The allocator to use.
  * @param chunk The chunk to read from.
  * @return Pointer to the value, if the item was an integer.
  * The value can be deleted with bp_cbor_require_delete().
  */
 gint64 * cbor_require_int64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
 
-/** Require a CBOR item to have a text- or byte-string value.
+/** Require a CBOR item to have a text-string value.
+ *
+ * @param alloc The allocator to use.
+ * @param parent The containing buffer.
+ * @param chunk The chunk to read size from.
+ * @return Pointer to the null-terminated UTF-8, if the item was a tstr.
+ */
+char * cbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, bp_cbor_chunk_t *chunk);
+
+/** Require a CBOR item to have a byte-string value.
  *
  * @param parent The containing buffer.
  * @param chunk The chunk to read size from.
  * @return Pointer to the value, if the item was an string.
  * The value is memory managed by wireshark.
  */
-tvbuff_t * cbor_require_string(tvbuff_t *parent, bp_cbor_chunk_t *chunk);
+tvbuff_t * cbor_require_bstr(tvbuff_t *parent, bp_cbor_chunk_t *chunk);
 
-
+/** Add an item representing an array or map container.
+ * If the item is type FT_UINT* or FT_INT* the count of (array) items
+ * or map (pairs) is used as the iterm value.
+ */
 proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+
+/** Add an item representing a non-boolean, non-float control value.
+ *
+ */
+proto_item * proto_tree_add_cbor_ctrl(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
 
 proto_item * proto_tree_add_cbor_boolean(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gboolean *value);
 
@@ -248,7 +268,9 @@ proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_inf
 
 proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value);
 
-proto_item * proto_tree_add_cbor_string(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *head);
+proto_item * proto_tree_add_cbor_tstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+
+proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
 
 #ifdef __cplusplus
 }

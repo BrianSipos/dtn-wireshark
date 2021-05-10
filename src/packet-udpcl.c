@@ -113,7 +113,7 @@ static hf_register_info fields[] = {
     {&hf_rtn_interval, {"Interval", "udpcl.ext.rtn.interval", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
 
     {&hf_ext_nodeid, {"Sender Node ID", "udpcl.ext.nodeid", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_ext_starttls, {"Initiate DTLS", "udpcl.ext.starttls", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
@@ -297,8 +297,8 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
 
     chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *xfer_fragment = cbor_require_string(tvb, chunk);
-    proto_tree_add_cbor_string(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
+    tvbuff_t *xfer_fragment = cbor_require_bstr(tvb, chunk);
+    proto_tree_add_cbor_bstr(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
 
     if (udpcl_desegment_transfer
         && xfer_id && xfer_tot_len && xfer_frag_offset && xfer_fragment) {
@@ -399,7 +399,8 @@ static int dissect_nodeid(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ex
     proto_tree *tree_nodeid = proto_item_add_subtree(item_nodeid, ett_ext_nodeid);
 
     bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    proto_tree_add_cbor_string(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
+    cbor_require_major_type(chunk, CBOR_TYPE_STRING);
+    proto_tree_add_cbor_tstr(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
     proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);

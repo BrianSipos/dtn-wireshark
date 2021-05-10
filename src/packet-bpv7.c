@@ -233,11 +233,11 @@ static hf_register_info fields[] = {
     {&hf_create_ts_seqno, {"Sequence Number", "bpv7.create_ts.seqno", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_eid_scheme, {"Scheme Code", "bpv7.eid.scheme", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(eid_schemes), 0x0, NULL, HFILL}},
     {&hf_eid_dtn_ssp_code, {"DTN SSP", "bpv7.eid.dtn_ssp_code", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_eid_dtn_ssp_text, {"DTN SSP", "bpv7.eid.dtn_ssp_text", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_eid_dtn_ssp_text, {"DTN SSP", "bpv7.eid.dtn_ssp_text", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_eid_ipn_node, {"IPN Node Number", "bpv7.eid.ipn_node", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_eid_ipn_service, {"IPN Service Number", "bpv7.eid.ipn_service", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_eid_dtn_wkssp, {"Well-known SSP", "bpv7.eid.wkssp", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_eid_dtn_serv, {"Service Name", "bpv7.eid.serv", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_eid_dtn_wkssp, {"Well-known SSP", "bpv7.eid.wkssp", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
+    {&hf_eid_dtn_serv, {"Service Name", "bpv7.eid.serv", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_primary_version, {"Version", "bpv7.primary.version", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_bundle_flags, {"Bundle Flags", "bpv7.primary.bundle_flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
@@ -251,11 +251,11 @@ static hf_register_info fields[] = {
     {&hf_primary_bundle_flags_delivery_report, {"Request reporting of bundle delivery", "bpv7.primary.bundle_flags.delivery_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_DELIVERY_REPORT, NULL, HFILL}},
     {&hf_primary_bundle_flags_deletion_report, {"Request reporting of bundle deletion", "bpv7.primary.bundle_flags.deleteion_report", FT_UINT32, BASE_DEC, NULL, BP_BUNDLE_REQ_DELETION_REPORT, NULL, HFILL}},
     {&hf_primary_dst_eid, {"Destination Endpoint ID", "bpv7.primary.dst_eid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_primary_dst_uri, {"Destination URI", "bpv7.primary.dst_uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_primary_dst_uri, {"Destination URI", "bpv7.primary.dst_uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_src_nodeid, {"Source Node ID", "bpv7.primary.src_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_primary_src_uri, {"Source URI", "bpv7.primary.src_uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_primary_src_uri, {"Source URI", "bpv7.primary.src_uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_report_nodeid, {"Report-to Node ID", "bpv7.primary.report_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_primary_report_uri, {"Report-to URI", "bpv7.primary.report_uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_primary_report_uri, {"Report-to URI", "bpv7.primary.report_uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_create_ts, {"Creation Timestamp", "bpv7.primary.create_ts", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_primary_lifetime, {"Lifetime", "bpv7.primary.lifetime", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
     {&hf_primary_lifetime_exp, {"Lifetime Expanded", "bpv7.primary.lifetime_exp", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -263,7 +263,7 @@ static hf_register_info fields[] = {
     {&hf_primary_frag_offset, {"Fragment Offset", "bpv7.primary.frag_offset", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_primary_total_length, {"Total Application Data Unit Length", "bpv7.primary.total_len", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
 
-    {&hf_bundle_ident, {"Bundle Identity", "bpv7.bundle.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_bundle_ident, {"Bundle Identity", "bpv7.bundle.identity", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_seen, {"First Seen", "bpv7.bundle.first_seen", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_RETRANS_PREV), 0x0, NULL, HFILL}},
     {&hf_bundle_seen_time_diff, {"Seen Time", "bpv7.bundle.seen_time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_bundle_status_ref, {"Status Bundle", "bpv7.bundle.status_ref", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -314,7 +314,7 @@ static hf_register_info fields[] = {
         FT_BYTES, BASE_NONE, NULL, 0x00, NULL, HFILL } },
 
     {&hf_previous_node_nodeid, {"Previous Node ID", "bpv7.previous_node.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_previous_node_uri, {"Previous URI", "bpv7.previous_node.uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_previous_node_uri, {"Previous URI", "bpv7.previous_node.uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_bundle_age_time, {"Bundle Age", "bpv7.bundle_age.time", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
 
@@ -333,11 +333,11 @@ static hf_register_info fields[] = {
     {&hf_status_rep_deleted, {"Reporting node deleted bundle", "bpv7.status_rep.deleted", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_reason_code, {"Reason Code", "bpv7.status_rep.reason_code", FT_UINT64, BASE_DEC | BASE_VAL64_STRING, VALS64(status_report_reason_vals), 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_src_nodeid, {"Subject Source Node ID", "bpv7.status_rep.subj_src_nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_status_rep_subj_src_uri, {"Subject Source URI", "bpv7.status_rep.subj_src_uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_status_rep_subj_src_uri, {"Subject Source URI", "bpv7.status_rep.subj_src_uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ts, {"Subject Creation Timestamp", "bpv7.status_rep.subj_ts", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_frag_offset, {"Subject Fragment Offset", "bpv7.status_rep.subj_frag_offset", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_payload_len, {"Subject Payload Length", "bpv7.status_rep.subj_payload_len", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
-    {&hf_status_rep_subj_ident, {"Subject Identity", "bpv7.status_rep.identity", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_status_rep_subj_ident, {"Subject Identity", "bpv7.status_rep.identity", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_status_rep_subj_ref, {"Subject Bundle", "bpv7.status_rep.subj_ref", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_ACK), 0x0, NULL, HFILL}},
     {&hf_status_time_diff, {"Status Time", "bpv7.status_rep.subj_time_diff", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
@@ -677,10 +677,8 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
                     break;
                 }
                 case CBOR_TYPE_STRING: {
-                    tvbuff_t *ssp_str = cbor_require_string(tvb, chunk);
-                    proto_tree_add_cbor_string(tree_eid, hf_eid_dtn_ssp_text, pinfo, tvb, chunk);
-
-                    char *ssp = (char *) tvb_get_string_enc(wmem_packet_scope(), ssp_str, 0, tvb_captured_length(ssp_str), ENC_UTF_8);
+                    char *ssp = cbor_require_tstr(wmem_packet_scope(), tvb, chunk);
+                    proto_tree_add_cbor_tstr(tree_eid, hf_eid_dtn_ssp_text, pinfo, tvb, chunk);
                     wmem_strbuf_append_printf(uribuf, "dtn:%s", ssp);
 
                     char *path_sep;
@@ -1015,7 +1013,7 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
             }
 
             chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            tvbuff_t *crc_field = cbor_require_string(tvb, chunk);
+            tvbuff_t *crc_field = cbor_require_bstr(tvb, chunk);
             field_ix++;
             block->crc_field = crc_field;
 
@@ -1114,7 +1112,7 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     }
 
     chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = cbor_require_string(tvb, chunk);
+    tvbuff_t *tvb_data = cbor_require_bstr(tvb, chunk);
     field_ix++;
     block->data = tvb_data;
     const guint tvb_data_len = (tvb_data ? tvb_captured_length(tvb_data) : 0);
@@ -1139,7 +1137,7 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
             }
 
             chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            tvbuff_t *crc_field = cbor_require_string(tvb, chunk);
+            tvbuff_t *crc_field = cbor_require_bstr(tvb, chunk);
             field_ix++;
             block->crc_field = crc_field;
 
@@ -1293,7 +1291,7 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
         // Either detect BREAK or decode block
         chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
         if (bp_cbor_is_indefinite_break(chunk)) {
-            proto_tree_add_item(tree_bundle, hf_bundle_break, tvb, chunk->start, chunk->data_length, ENC_NA);
+            proto_tree_add_cbor_ctrl(tree_bundle, hf_bundle_break, pinfo, tvb, chunk);
             break;
         }
         offset = chunk->start;

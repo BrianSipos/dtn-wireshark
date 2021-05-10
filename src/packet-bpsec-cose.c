@@ -1,5 +1,6 @@
 #include "packet-bpsec.h"
 #include "packet-bpv7.h"
+#include "packet-cose.h"
 #include "bp_cbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
@@ -29,14 +30,17 @@ typedef enum {
 static int proto_bpsec_cose = -1;
 
 /// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
+static dissector_table_t table_media = NULL;
+static dissector_table_t table_cose_msg = NULL;
+
+static dissector_handle_t handle_cose_msg_hdr = NULL;
 
 static int hf_aad_scope = -1;
 static int hf_aad_scope_primary = -1;
 static int hf_aad_scope_target = -1;
 static int hf_aad_scope_security = -1;
-static int hf_addl_protected = -1;
-static int hf_addl_unprotected = -1;
+static int hf_addl_prot_bstr = -1;
+static int hf_addl_unprot = -1;
 static int hf_cose_msg = -1;
 /// Field definitions
 static hf_register_info fields[] = {
@@ -44,9 +48,9 @@ static hf_register_info fields[] = {
     {&hf_aad_scope_primary, {"Primary Block", "bpsec.cose.aad_scope.primary", FT_UINT8, BASE_DEC, NULL, HAS_PRIMARY_CTX, NULL, HFILL}},
     {&hf_aad_scope_target, {"Target Block", "bpsec.cose.aad_scope.target", FT_UINT8, BASE_DEC, NULL, HAS_TARGET_CTX, NULL, HFILL}},
     {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_UINT8, BASE_DEC, NULL, HAS_SECURITY_CTX, NULL, HFILL}},
-    {&hf_addl_protected, {"Additional Protected Headers (bstr)", "bpsec.cose.addl_proected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_addl_unprotected, {"Additional Unprotected Headers", "bpsec.cose.addl_unprotected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_addl_prot_bstr, {"Additional Protected Headers (bstr)", "bpsec.cose.addl_proected_bstr", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_addl_unprot, {"Additional Unprotected Headers", "bpsec.cose.addl_unprotected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
 static WS_FIELDTYPE aad_scope[] = {
@@ -57,14 +61,16 @@ static WS_FIELDTYPE aad_scope[] = {
 };
 
 static int ett_aad_scope = -1;
-static int ett_addl_protected = -1;
-static int ett_addl_unprotected = -1;
+static int ett_addl_prot_bstr = -1;
+static int ett_addl_prot = -1;
+static int ett_addl_unprot = -1;
 static int ett_cose_msg = -1;
 /// Tree structures
 static int *ett[] = {
     &ett_aad_scope,
-    &ett_addl_protected,
-    &ett_addl_unprotected,
+    &ett_addl_prot_bstr,
+    &ett_addl_prot,
+    &ett_addl_unprot,
     &ett_cose_msg,
 };
 
@@ -85,20 +91,18 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
 static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_protected, tvb, 0, -1, ENC_NA);
-    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_protected);
+    bp_cbor_chunk_t *chunk_prot_bstr = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *prot_bstr = cbor_require_bstr(tvb, chunk_prot_bstr);
+    proto_item *item_prot_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_prot_bstr, pinfo, tvb, chunk_prot_bstr);
+    if (prot_bstr) {
+        proto_tree *tree_prot_bstr = proto_item_add_subtree(item_prot_bstr, ett_addl_prot_bstr);
 
-    bp_cbor_chunk_t *head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = cbor_require_string(tvb, head);
-
-    dissector_try_string(
-        dissect_media,
-        "application/cbor",
-        tvb_data,
-        pinfo,
-        tree_hdr,
-        NULL
-    );
+        int sublen = call_dissector(handle_cose_msg_hdr, prot_bstr, pinfo, tree_prot_bstr);
+        if (sublen < 0) {
+            return sublen;
+        }
+        offset += sublen;
+    }
 
     return offset;
 }
@@ -106,42 +110,32 @@ static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 /** Dissector for COSE unprotected header.
  */
 static int dissect_addl_unprotected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
-    gint offset = 0;
-
-    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_unprotected, tvb, 0, -1, ENC_NA);
-    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_unprotected);
-
-    offset += dissector_try_string(
-        dissect_media,
-        "application/cbor",
-        tvb,
-        pinfo,
-        tree_hdr,
-        NULL
-    );
-
-    return offset;
+    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_unprot, tvb, 0, -1, ENC_NA);
+    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_prot);
+    int sublen = call_dissector(handle_cose_msg_hdr, tvb, pinfo, tree_hdr);
+    return sublen;
 }
 
 /** Dissector for bstr-wrapped CBOR.
  */
-static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
+static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data) {
+    const gint64 *typeid = data;
+    DISSECTOR_ASSERT(typeid != NULL);
     gint offset = 0;
 
     bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = cbor_require_string(tvb, chunk);
+    tvbuff_t *tvb_data = cbor_require_bstr(tvb, chunk);
 
-    proto_item *item_msg = proto_tree_add_item(tree, hf_cose_msg, tvb, 0, offset, ENC_NA);
+    proto_item *item_msg = proto_tree_add_cbor_bstr(tree, hf_cose_msg, pinfo, tvb, chunk);
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
 
     if (tvb_data) {
-        dissector_try_string(
-            dissect_media,
-            "application/cbor", // should really be "application/cose"
+        dissector_try_uint(
+            table_cose_msg,
+            (guint32)(*typeid), // result ID is message tag
             tvb_data,
             pinfo,
-            tree_msg,
-            NULL
+            tree_msg
         );
     }
 
@@ -167,7 +161,9 @@ static void proto_register_bpsec_cose(void) {
 }
 
 static void proto_reg_handoff_bpsec_cose(void) {
-    dissect_media = find_dissector_table("media_type");
+    table_media = find_dissector_table("media_type");
+    table_cose_msg = find_dissector_table("cose.msgtag");
+    handle_cose_msg_hdr = find_dissector_add_dependency("cose.msg.headers", proto_bpsec_cose);
 
     /* Packaged extensions */
     const gint64 ctxid = 99;

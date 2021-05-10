@@ -369,22 +369,20 @@ gint64 * cbor_require_int64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk) {
     return result;
 }
 
-tvbuff_t * cbor_require_string(tvbuff_t *parent, bp_cbor_chunk_t *chunk) {
-    tvbuff_t *result = NULL;
-    switch (chunk->type_major) {
-        case CBOR_TYPE_BYTESTRING:
-        case CBOR_TYPE_STRING:
-            result = tvb_new_subset_length(parent, chunk->start + chunk->head_length, chunk->head_value);
-            break;
-        default:
-            wmem_list_append(chunk->errors, bp_cbor_error_new(
-                    chunk->_alloc, &ei_cbor_wrong_type,
-                    "Item has major type %d, should be %d or %d",
-                    chunk->type_major, CBOR_TYPE_UINT, CBOR_TYPE_NEGINT
-            ));
-            break;
+char * cbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, bp_cbor_chunk_t *chunk) {
+    if (!cbor_require_major_type(chunk, CBOR_TYPE_STRING)) {
+        return NULL;
     }
-    return result;
+
+    return (char *)tvb_get_string_enc(alloc, parent, chunk->start + chunk->head_length, chunk->head_value, ENC_UTF_8);
+}
+
+tvbuff_t * cbor_require_bstr(tvbuff_t *parent, bp_cbor_chunk_t *chunk) {
+    if (!cbor_require_major_type(chunk, CBOR_TYPE_BYTESTRING)) {
+        return NULL;
+    }
+
+    return tvb_new_subset_length(parent, chunk->start + chunk->head_length, chunk->head_value);
 }
 
 proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
@@ -399,6 +397,12 @@ proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet
     else {
         item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, -1, ENC_NA);
     }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
+    return item;
+}
+
+proto_item * proto_tree_add_cbor_ctrl(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, chunk->head_length, ENC_NA);
     bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
@@ -453,7 +457,6 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
     }
     tvbuff_t *tvb_flags = tvb_new_child_real_data(tvb, flags, flagsize, flagsize);
 
-    (void)chunk;
     proto_item *item = proto_tree_add_item(tree, hfindex, tvb_flags, 0, flagsize, ENC_BIG_ENDIAN);
     proto_tree *subtree = proto_item_add_subtree(item, ett);
     proto_tree_add_bitmask_list_value(subtree, tvb_flags, 0, flagsize, fields, value ? *value : 0);
@@ -461,27 +464,14 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
     return item;
 }
 
-proto_item * proto_tree_add_cbor_string(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
-    proto_item *item = NULL;
-    switch (chunk->type_major) {
-        case CBOR_TYPE_STRING: {
-            char *value = (char *)tvb_get_string_enc(wmem_packet_scope(), tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_UTF_8);
-            // This function needs a null-terminated string
-            item = proto_tree_add_string(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, value);
-            wmem_free(wmem_packet_scope(), value);
-            break;
-        }
-        case CBOR_TYPE_BYTESTRING: {
-            guint8 *value = tvb_memdup(wmem_packet_scope(), tvb, chunk->start + chunk->head_length, chunk->head_value);
-            item = proto_tree_add_bytes(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, value);
-            wmem_free(wmem_packet_scope(), value);
-            break;
-        }
-        default:
-            item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, chunk->head_length, ENC_NA);
-            expert_add_info(pinfo, item, &ei_cbor_wrong_type);
-            break;
-    }
+proto_item * proto_tree_add_cbor_tstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_NA);
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
+    return item;
+}
+
+proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_NA);
     bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }

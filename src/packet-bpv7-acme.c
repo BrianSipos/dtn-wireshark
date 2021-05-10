@@ -183,13 +183,13 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
             switch (*key) {
                 case ACME_TOKEN_PART1: {
                     bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    token_part1 = cbor_require_string(tvb, chunk);
-                    item_token_part1 = proto_tree_add_cbor_string(tree_key, hf_token_part1, pinfo, tvb, chunk);
+                    token_part1 = cbor_require_bstr(tvb, chunk);
+                    item_token_part1 = proto_tree_add_cbor_bstr(tree_key, hf_token_part1, pinfo, tvb, chunk);
                     break;
                 }
                 case ACME_KEY_AUTH_DIGEST: {
                     bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    item_key_auth_digest = proto_tree_add_cbor_string(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
+                    item_key_auth_digest = proto_tree_add_cbor_bstr(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
                     break;
                 }
                 default: {

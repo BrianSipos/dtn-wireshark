@@ -57,7 +57,7 @@ static hf_register_info fields[] = {
     {&hf_asb_flags, {"Flags", "bpv7.asb.flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags_has_params, {"Parameters Present", "bpv7.asb.flags.has_params", FT_UINT8, BASE_DEC, NULL, ASB_HAS_PARAMS, NULL, HFILL}},
     {&hf_asb_secsrc_nodeid, {"Security Source", "bpsec.asb.secsrc.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_secsrc_uri, {"Security Source URI", "bpsec.asb.secsrc.uri", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_asb_secsrc_uri, {"Security Source URI", "bpsec.asb.secsrc.uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_list, {"Security Parameters, Count", "bpsec.asb.param_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_pair, {"Parameter", "bpsec.asb.param", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_id, {"Type ID", "bpsec.asb.param.id", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
@@ -372,8 +372,8 @@ static void proto_register_bpsec(void) {
     expert_module_t *expert = expert_register_protocol(proto_bpsec);
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
-    param_dissectors = register_custom_dissector_table("bpsec.param", "BPSec Parameter", proto_bpsec, &bpsec_id_hash, &bpsec_id_equal);
-    result_dissectors = register_custom_dissector_table("bpsec.result", "BPSec Result", proto_bpsec, &bpsec_id_hash, &bpsec_id_equal);
+    param_dissectors = register_custom_dissector_table("bpsec.param", "BPSec Parameter", proto_bpsec, bpsec_id_hash, bpsec_id_equal);
+    result_dissectors = register_custom_dissector_table("bpsec.result", "BPSec Result", proto_bpsec, bpsec_id_hash, bpsec_id_equal);
 
     prefs_register_protocol(proto_bpsec, reinit_bpsec);
 }
