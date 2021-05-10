@@ -11,12 +11,7 @@ jobs:
     - uses: actions/checkout@v1
     - name: dependencies
       run: |
-        sudo apt-get update && sudo apt-get install cmake wireshark-dev libgcrypt-dev gnutls-dev libgtest-dev
-        # Annoying need on Ubuntu 18.04
-#        cd /usr/src/gtest
-#        sudo cmake CMakeLists.txt
-#        sudo make
-#        sudo cp *.a /usr/lib
+        sudo apt-get update && sudo apt-get install cmake build-essential wireshark-dev libgcrypt-dev gnutls-dev libgtest-dev
     - name: configure
       run: |
         mkdir build
