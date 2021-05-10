@@ -15,6 +15,30 @@
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
 #endif
 
+typedef struct {
+    void *data;
+    guint64 len;
+} bp_acme_bytes_t;
+
+static void bp_acme_bytes_init(wmem_allocator_t *alloc, bp_acme_bytes_t *bytes, tvbuff_t *tvb) {
+    bytes->len = tvb_reported_length(tvb);
+    bytes->data = tvb_memdup(alloc, tvb, 0, bytes->len);
+}
+
+gboolean bp_acme_bytes_equal(const bp_acme_bytes_t *a, const bp_acme_bytes_t *b) {
+    if (a->len != b->len) {
+        return FALSE;
+    }
+    return memcmp(a->data, b->data, a->len) == 0;
+}
+
+guint bp_acme_bytes_hash(const bp_acme_bytes_t *bytes) {
+    GBytes *conv = g_bytes_new_static(bytes->data, bytes->len);
+    const guint val = g_bytes_hash(conv);
+    g_bytes_unref(conv);
+    return val;
+}
+
 /// Challenge--response correlation
 typedef struct {
     /// EID of the challenge source or response destination
@@ -22,11 +46,11 @@ typedef struct {
     /// EID of the challenge source or response destination
     const gchar *client_nodeid;
     /// ACME token-part1 as a nonce
-    const GBytes *token_part1;
+    bp_acme_bytes_t token_part1;
 } bp_acme_corr_t;
 
-bp_acme_corr_t * bp_acme_corr_new(const bp_bundle_t *bundle) {
-    bp_acme_corr_t *obj = wmem_new0(wmem_file_scope(), bp_acme_corr_t);
+static bp_acme_corr_t * bp_acme_corr_new(wmem_allocator_t *alloc, const bp_bundle_t *bundle) {
+    bp_acme_corr_t *obj = wmem_new0(alloc, bp_acme_corr_t);
     const gboolean is_req = bundle->primary->flags & BP_BUNDLE_USER_APP_ACK;
     if (is_req) {
         obj->server_nodeid = bundle->primary->src_nodeid->uri;
@@ -42,22 +66,23 @@ bp_acme_corr_t * bp_acme_corr_new(const bp_bundle_t *bundle) {
 
 /** Function to match the GCompareFunc signature.
  */
-gboolean bp_acme_corr_equal(gconstpointer a, gconstpointer b) {
+static gboolean bp_acme_corr_equal(gconstpointer a, gconstpointer b) {
     const bp_acme_corr_t *aobj = a;
     const bp_acme_corr_t *bobj = b;
     return (
-        (aobj->server_nodeid && bobj->server_nodeid && g_str_equal(aobj->server_nodeid, bobj->server_nodeid))
-        && (aobj->token_part1 && bobj->token_part1 && g_bytes_equal(aobj->token_part1, bobj->token_part1))
+        (aobj->server_nodeid && bobj->server_nodeid
+            && g_str_equal(aobj->server_nodeid, bobj->server_nodeid))
+        && bp_acme_bytes_equal(&(aobj->token_part1), &(bobj->token_part1))
     );
 }
 
 /** Function to match the GHashFunc signature.
  */
-guint bp_acme_corr_hash(gconstpointer key) {
+static guint bp_acme_corr_hash(gconstpointer key) {
     const bp_acme_corr_t *obj = key;
     return (
         g_str_hash(obj->server_nodeid ? obj->server_nodeid : "")
-        ^ g_bytes_hash(obj->token_part1)
+        ^ bp_acme_bytes_hash(&(obj->token_part1))
     );
 }
 
@@ -72,7 +97,7 @@ typedef struct {
 typedef struct {
     /// Map from a bundle ID (bp_bundle_ident_t) to
     /// exchange (bp_acme_exchange_t) pointer.
-    GHashTable *exchange;
+    wmem_map_t *exchange;
 
 } bp_acme_history_t;
 
@@ -130,55 +155,46 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
     if (!context) {
         return -1;
     }
-    const gint offset_start = 0;
     gint offset = 0;
 
     proto_item_append_text(proto_tree_get_parent(tree), ", ACME Message");
 
-    // Status Information array head
-    proto_item *item_acme = proto_tree_add_item(tree, proto_bp_acme, tvb, offset_start, -1, ENC_NA);
-    proto_tree *tree_acme = proto_item_add_subtree(item_acme, ett_acme);
-
     const gboolean is_req = context->bundle->primary->flags & BP_BUNDLE_USER_APP_ACK;
-    proto_item_append_text(item_acme, ": %s Bundle", is_req ? "Challenge" : "Response");
-
     tvbuff_t *token_part1 = NULL;
     proto_item *item_token_part1 = NULL;
     proto_item *item_key_auth_digest = NULL;
 
-    bp_cbor_chunk_t *chunk_msg = cbor_require_map(tvb, pinfo, item_acme, &offset);
-    if (chunk_msg) {
-        for (gint64 ix = 0; ix < chunk_msg->head_value; ++ix) {
-            bp_cbor_chunk_t *key_chunk = bp_scan_cbor_chunk(tvb, offset);
-            offset += key_chunk->data_length;
-            gint64 *key = cbor_require_int64(key_chunk);
-            proto_item *item_key = proto_tree_add_cbor_int64(tree_acme, hf_acme_key, pinfo, tvb, key_chunk, key);
+    bp_cbor_chunk_t *chunk_msg = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    cbor_require_map(chunk_msg);
+    proto_item *item_acme = proto_tree_add_cbor_container(tree, proto_bp_acme, pinfo, tvb, chunk_msg);
+    proto_item_append_text(item_acme, ": %s Bundle", is_req ? "Challenge" : "Response");
+    proto_tree *tree_acme = proto_item_add_subtree(item_acme, ett_acme);
+    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_msg)) {
+        for (guint64 ix = 0; ix < chunk_msg->head_value; ++ix) {
+            bp_cbor_chunk_t *chunk_key = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            gint64 *key = cbor_require_int64(wmem_packet_scope(), chunk_key);
+            proto_item *item_key = proto_tree_add_cbor_int64(tree_acme, hf_acme_key, pinfo, tvb, chunk_key, key);
             proto_tree *tree_key = proto_item_add_subtree(item_key, ett_acme_key);
-            bp_cbor_chunk_delete(key_chunk);
 
             if (!key) {
-                cbor_skip_next_item(tvb, &offset);
+                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 continue;
             }
             switch (*key) {
                 case ACME_TOKEN_PART1: {
-                    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-                    offset += chunk->data_length;
+                    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
                     token_part1 = cbor_require_string(tvb, chunk);
                     item_token_part1 = proto_tree_add_cbor_string(tree_key, hf_token_part1, pinfo, tvb, chunk);
-                    bp_cbor_chunk_delete(chunk);
                     break;
                 }
                 case ACME_KEY_AUTH_DIGEST: {
-                    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-                    offset += chunk->data_length;
+                    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
                     item_key_auth_digest = proto_tree_add_cbor_string(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
-                    bp_cbor_chunk_delete(chunk);
                     break;
                 }
                 default: {
                     guint init_offset = offset;
-                    cbor_skip_next_item(tvb, &offset);
+                    bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                     expert_add_info(pinfo, item_key, &ei_acme_key_unknown);
 
                     tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);
@@ -206,16 +222,16 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
         expert_add_info(pinfo, item_acme, &ei_unexpected_key_auth_hash);
     }
 
-    bp_acme_corr_t *corr = bp_acme_corr_new(context->bundle);
-    if (token_part1) {
-        const guint len = tvb_captured_length(token_part1);
-        void *data = tvb_memdup(wmem_file_scope(), token_part1, 0, len);
-        corr->token_part1 = g_bytes_new(data, len);
-    }
-    bp_acme_exchange_t *exc = g_hash_table_lookup(bp_acme_history->exchange, corr);
+    bp_acme_corr_t *corr = bp_acme_corr_new(wmem_file_scope(), context->bundle);
+    bp_acme_bytes_init(wmem_file_scope(), &(corr->token_part1), token_part1);
+
+    bp_acme_exchange_t *exc = wmem_map_lookup(bp_acme_history->exchange, corr);
     if (!exc) {
         exc = wmem_new0(wmem_file_scope(), bp_acme_exchange_t);
-        g_hash_table_insert(bp_acme_history->exchange, corr, exc);
+        wmem_map_insert(bp_acme_history->exchange, corr, exc);
+    }
+    else {
+        wmem_free(wmem_file_scope(), corr);
     }
 
     bp_bundle_t **self = (is_req ? &(exc->client_msg) : &(exc->server_msg));
@@ -229,20 +245,17 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
         PROTO_ITEM_SET_GENERATED(item_rel);
     }
 
-    proto_item_set_len(item_acme, offset - offset_start);
-    bp_cbor_chunk_delete(chunk_msg);
+    proto_item_set_len(item_acme, offset);
     return offset;
 }
 
 /// Clear state when new file scope is entered
 static void bp_acme_init(void) {
     bp_acme_history = wmem_new0(wmem_file_scope(), bp_acme_history_t);
-    bp_acme_history->exchange = g_hash_table_new_full(bp_acme_corr_hash, bp_acme_corr_equal, NULL, NULL);
+    bp_acme_history->exchange = wmem_map_new(wmem_file_scope(), bp_acme_corr_hash, bp_acme_corr_equal);
 }
 
-static void bp_acme_cleanup(void) {
-    g_hash_table_destroy(bp_acme_history->exchange);
-}
+static void bp_acme_cleanup(void) {}
 
 /// Re-initialize after a configuration change
 static void bp_acme_reinit_config(void) {}

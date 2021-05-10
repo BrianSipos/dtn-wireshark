@@ -17,15 +17,11 @@ static ei_register_info expertitems[] = {
     {&ei_item_missing, {"bp_cbor.item_missing", PI_MALFORMED, PI_ERROR, "CBOR item is missing or incorrect type", EXPFILL}},
 };
 
-/** Delete an arbitrary object allocated under this file scope.
- *
- * @param obj The object to delete.
+/** Read the raw value from a CBOR head.
+ * @param[in,out] head The head to read into.
+ * @param tvb The buffer to read from.
  */
-static void file_scope_delete(gpointer ptr) {
-    wmem_free(wmem_file_scope(), ptr);
-}
-
-static void cbor_scan_unsigned(bp_cbor_head_t *head, tvbuff_t *tvb) {
+static void bp_cbor_read_unsigned(bp_cbor_head_t *head, tvbuff_t *tvb) {
     switch (head->type_minor) {
         case 0x18:
             head->rawvalue = tvb_get_guint8(tvb, head->start + head->length);
@@ -39,16 +35,10 @@ static void cbor_scan_unsigned(bp_cbor_head_t *head, tvbuff_t *tvb) {
             head->rawvalue = tvb_get_guint32(tvb, head->start + head->length, ENC_BIG_ENDIAN);
             head->length += 4;
             break;
-        case 0x1B: {
-            guint64 val = tvb_get_guint64(tvb, head->start + head->length, ENC_BIG_ENDIAN);
-            if (val > INT64_MAX) {
-                val = INT64_MAX;
-                head->error = &ei_cbor_overflow;
-            }
-            head->rawvalue = val;
+        case 0x1B:
+            head->rawvalue = tvb_get_guint64(tvb, head->start + head->length, ENC_BIG_ENDIAN);
             head->length += 8;
             break;
-        }
         default:
             if (head->type_minor <= 0x17) {
                 head->rawvalue = head->type_minor;
@@ -57,8 +47,8 @@ static void cbor_scan_unsigned(bp_cbor_head_t *head, tvbuff_t *tvb) {
     }
 }
 
-bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start) {
-    bp_cbor_head_t *head = wmem_new0(wmem_file_scope(), bp_cbor_head_t);
+bp_cbor_head_t * bp_cbor_head_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint start) {
+    bp_cbor_head_t *head = wmem_new0(alloc, bp_cbor_head_t);
 
     head->start = start;
     const guint8 first = tvb_get_guint8(tvb, head->start);
@@ -71,7 +61,7 @@ bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start) {
         case CBOR_TYPE_UINT:
         case CBOR_TYPE_NEGINT:
         case CBOR_TYPE_TAG:
-            cbor_scan_unsigned(head, tvb);
+            bp_cbor_read_unsigned(head, tvb);
             if (head->type_minor > 0x1B) {
                 head->error = &ei_cbor_invalid;
             }
@@ -81,7 +71,7 @@ bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start) {
         case CBOR_TYPE_ARRAY:
         case CBOR_TYPE_MAP:
         case CBOR_TYPE_FLOAT_CTRL:
-            cbor_scan_unsigned(head, tvb);
+            bp_cbor_read_unsigned(head, tvb);
             if ((head->type_minor > 0x1B) && (head->type_minor < 0x1F)) {
                 head->error = &ei_cbor_invalid;
             }
@@ -95,105 +85,149 @@ bp_cbor_head_t * bp_scan_cbor_head(tvbuff_t *tvb, gint start) {
     return head;
 }
 
-void bp_cbor_head_delete(gpointer ptr) {
-    file_scope_delete(ptr);
+void bp_cbor_head_free(wmem_allocator_t *alloc, bp_cbor_head_t *head) {
+    wmem_free(alloc, head);
 }
 
-bp_cbor_chunk_t * bp_scan_cbor_chunk(tvbuff_t *tvb, gint start) {
+bp_cbor_error_t * bp_cbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...) {
+    bp_cbor_error_t *err = wmem_new0(alloc, bp_cbor_error_t);
+    err->ei = ei;
+    if (format) {
+        wmem_strbuf_t *buf = wmem_strbuf_new(alloc, "");
+
+        va_list ap;
+        va_start(ap, format);
+        wmem_strbuf_append_vprintf(buf, format, ap);
+        va_end(ap);
+
+        err->msg = wmem_strbuf_finalize(buf);
+    }
+    return err;
+}
+
+bp_cbor_chunk_t * bp_cbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset) {
+    DISSECTOR_ASSERT(alloc != NULL);
+    DISSECTOR_ASSERT(offset != NULL);
+    DISSECTOR_ASSERT(tvb != NULL);
     const gint buflen = tvb_captured_length(tvb);
 
-    bp_cbor_chunk_t *chunk = wmem_new0(wmem_file_scope(), bp_cbor_chunk_t);
-    chunk->errors = g_sequence_new(NULL);
-    chunk->tags = g_sequence_new(file_scope_delete);
-    chunk->start = start;
+    bp_cbor_chunk_t *chunk = wmem_new0(alloc, bp_cbor_chunk_t);
+    chunk->_alloc = alloc;
+    chunk->errors = wmem_list_new(alloc);
+    chunk->tags = wmem_list_new(alloc);
+    chunk->start = *offset;
 
-    gint offset = start;
-    while (offset < buflen) {
-        bp_cbor_head_t *head = bp_scan_cbor_head(tvb, offset);
+    int used_head = 0;
+    while (*offset < buflen) {
+        bp_cbor_head_t *head = bp_cbor_head_read(alloc, tvb, *offset);
         if (!head) {
             break;
         }
-        offset += head->length;
+        *offset += head->length;
         chunk->head_length += head->length;
         if (head->error) {
-            g_sequence_append(chunk->errors, head->error);
+            wmem_list_append(chunk->errors, bp_cbor_error_new(alloc, head->error, NULL));
         }
         if (head->type_major == CBOR_TYPE_TAG) {
-            guint64 *tag = wmem_new(wmem_file_scope(), guint64);
+            guint64 *tag = wmem_new(alloc, guint64);
             *tag = head->rawvalue;
-            g_sequence_append(chunk->tags, tag);
-            bp_cbor_head_delete(head);
+            wmem_list_append(chunk->tags, tag);
+            // same chunk, next part
+            bp_cbor_head_free(alloc, head);
             continue;
         }
+
         // An actual (non-tag) header
         chunk->type_major = head->type_major;
         chunk->type_minor = head->type_minor;
+        chunk->head_value = head->rawvalue;
 
-        if (head->type_major == CBOR_TYPE_NEGINT) {
-            chunk->head_value = -(head->rawvalue) - 1;
-        }
-        else {
-            chunk->head_value = head->rawvalue;
-        }
-
+        chunk->data_length = chunk->head_length;
         switch ((cbor_type)(head->type_major)) {
             case CBOR_TYPE_BYTESTRING:
             case CBOR_TYPE_STRING:
-                chunk->data_length = chunk->head_length + chunk->head_value;
+                if (chunk->type_minor != 31) {
+                    // skip over definite data
+                    *offset += chunk->head_value;
+                    chunk->data_length += chunk->head_value;
+                }
                 break;
             default:
-                chunk->data_length = chunk->head_length;
                 break;
         }
 
-        bp_cbor_head_delete(head);
+        used_head += 1;
+        bp_cbor_head_free(alloc, head);
         break;
+    }
+
+    if (used_head == 0) {
+        wmem_list_append(chunk->errors, bp_cbor_error_new(alloc, &ei_item_missing, NULL));
+        chunk->type_major = 0xFF;
+        chunk->type_minor = 0xFF;
+        chunk->head_value = 0;
     }
 
     return chunk;
 }
 
+void bp_cbor_chunk_free(bp_cbor_chunk_t *chunk) {
+    DISSECTOR_ASSERT(chunk);
+    wmem_allocator_t *alloc = chunk->_alloc;
+    wmem_destroy_list(chunk->errors);
+    wmem_destroy_list(chunk->tags);
+    wmem_free(alloc, chunk);
+}
+
 void bp_cbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const bp_cbor_chunk_t *chunk) {
-    for (GSequenceIter *it = g_sequence_get_begin_iter(chunk->errors);
-        !g_sequence_iter_is_end(it); it = g_sequence_iter_next(it)) {
-        expert_add_info(pinfo, item, (expert_field *)(g_sequence_get(it)));
+    for (wmem_list_frame_t *it = wmem_list_head(chunk->errors); it;
+            it = wmem_list_frame_next(it)) {
+        bp_cbor_error_t *err = wmem_list_frame_data(it);
+        if (err->msg) {
+            expert_add_info_format(pinfo, item, err->ei, "%s", err->msg);
+        }
+        else {
+            expert_add_info(pinfo, item, err->ei);
+        }
     }
 }
 
-void bp_cbor_chunk_delete(gpointer ptr) {
-    bp_cbor_chunk_t *obj = (bp_cbor_chunk_t *)ptr;
-    g_sequence_free(obj->errors);
-    g_sequence_free(obj->tags);
-    file_scope_delete(ptr);
+guint64 bp_cbor_has_errors(const bp_cbor_chunk_t *chunk) {
+    return wmem_list_count(chunk->errors);
 }
 
-gboolean cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk) {
+gboolean bp_cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk) {
     return (
         (chunk->type_major == CBOR_TYPE_FLOAT_CTRL)
         && (chunk->type_minor == 31)
     );
 }
 
-gboolean cbor_skip_next_item(tvbuff_t *tvb, gint *offset) {
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, *offset);
-    *offset += chunk->data_length;
+gboolean bp_cbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset) {
+    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(alloc, tvb, offset);
     switch (chunk->type_major) {
         case CBOR_TYPE_UINT:
         case CBOR_TYPE_NEGINT:
         case CBOR_TYPE_TAG:
         case CBOR_TYPE_FLOAT_CTRL:
+            break;
         case CBOR_TYPE_BYTESTRING:
         case CBOR_TYPE_STRING:
+            if (chunk->type_minor == 31) {
+                // wait for indefinite break
+                while (!bp_cbor_skip_next_item(alloc, tvb, offset)) {}
+            }
+            // bp_cbor_read_chunk() sets offset past definite value
             break;
         case CBOR_TYPE_ARRAY: {
             if (chunk->type_minor == 31) {
                 // wait for indefinite break
-                while (!cbor_skip_next_item(tvb, offset)) {}
+                while (!bp_cbor_skip_next_item(alloc, tvb, offset)) {}
             }
             else {
-                const gint64 count = chunk->head_value;
-                for (gint64 ix = 0; ix < count; ++ix) {
-                    cbor_skip_next_item(tvb, offset);
+                const guint64 count = chunk->head_value;
+                for (guint64 ix = 0; ix < count; ++ix) {
+                    bp_cbor_skip_next_item(alloc, tvb, offset);
                 }
             }
             break;
@@ -201,122 +235,141 @@ gboolean cbor_skip_next_item(tvbuff_t *tvb, gint *offset) {
         case CBOR_TYPE_MAP: {
             if (chunk->type_minor == 31) {
                 // wait for indefinite break
-                while (!cbor_skip_next_item(tvb, offset)) {}
+                while (!bp_cbor_skip_next_item(alloc, tvb, offset)) {}
             }
             else {
-                const gint64 count = 2 * chunk->head_value;
-                for (gint64 ix = 0; ix < count; ++ix) {
-                    cbor_skip_next_item(tvb, offset);
+                const guint64 count = chunk->head_value;
+                for (guint64 ix = 0; ix < count; ++ix) {
+                    bp_cbor_skip_next_item(alloc, tvb, offset);
+                    bp_cbor_skip_next_item(alloc, tvb, offset);
                 }
             }
             break;
         }
     }
-    const gboolean is_break = cbor_is_indefinite_break(chunk);
-    bp_cbor_chunk_delete(chunk);
+    const gboolean is_break = bp_cbor_is_indefinite_break(chunk);
+    bp_cbor_chunk_free(chunk);
     return is_break;
+}
+
+gboolean bp_cbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset, const bp_cbor_chunk_t *chunk) {
+    if (bp_cbor_has_errors(chunk) == 0) {
+        return FALSE;
+    }
+
+    *offset = chunk->start;
+    bp_cbor_skip_next_item(alloc, tvb, offset);
+    return TRUE;
 }
 
 void bp_cbor_init(expert_module_t *expert) {
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 }
 
-bp_cbor_chunk_t * cbor_require_array(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset) {
-    bp_cbor_chunk_t *head = bp_scan_cbor_chunk(tvb, *offset);
-    *offset += head->data_length;
-
-    if (head->type_major != CBOR_TYPE_ARRAY) {
-        expert_add_info_format(pinfo, item, &ei_cbor_wrong_type, "Should-be-array has type %d, should be %d", head->type_major, CBOR_TYPE_ARRAY);
-        bp_cbor_chunk_delete(head);
-        head = NULL;
+gboolean cbor_require_major_type(bp_cbor_chunk_t *chunk, cbor_type major) {
+    if (chunk->type_major == major) {
+        return TRUE;
     }
-    return head;
+    wmem_list_append(chunk->errors, bp_cbor_error_new(
+            chunk->_alloc, &ei_cbor_wrong_type,
+            "Item has major type %d, should be %d",
+            chunk->type_major, major
+    ));
+    return FALSE;
 }
 
-gboolean cbor_require_array_size(tvbuff_t *tvb _U_, packet_info *pinfo, proto_item *item, const bp_cbor_chunk_t *head, gint64 count_min, gint64 count_max) {
-    if ((head->head_value < count_min) || (head->head_value > count_max)) {
-        expert_add_info_format(pinfo, item, &ei_cbor_array_wrong_size, "Array has %" PRId64 " items, should be within [%"PRId64", %"PRId64"]", head->head_value, count_min, count_max);
+gboolean cbor_require_array(bp_cbor_chunk_t *chunk) {
+    return cbor_require_major_type(chunk, CBOR_TYPE_ARRAY);
+}
+
+gboolean cbor_require_array_size(bp_cbor_chunk_t *chunk, guint64 count_min, guint64 count_max) {
+    if (!cbor_require_array(chunk)) {
+        return FALSE;
+    }
+    if ((chunk->head_value < count_min) || (chunk->head_value > count_max)) {
+        wmem_list_append(chunk->errors, bp_cbor_error_new(
+                chunk->_alloc, &ei_cbor_array_wrong_size,
+                "Array has %" PRId64 " items, should be within [%"PRId64", %"PRId64"]",
+                chunk->head_value, count_min, count_max
+        ));
         return FALSE;
     }
     return TRUE;
 }
 
-bp_cbor_chunk_t * cbor_require_array_with_size(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset, gint64 count_min, gint64 count_max) {
-    gint start_offset = *offset;
-    bp_cbor_chunk_t *head = cbor_require_array(tvb, pinfo, item, offset);
-    if (head) {
-        if (!cbor_require_array_size(tvb, pinfo, item, head, count_min, count_max)) {
-            // Skip whole array
-            *offset = start_offset;
-            cbor_skip_next_item(tvb, offset);
-
-            bp_cbor_chunk_delete(head);
-            head = NULL;
-        }
-    }
-    return head;
+gboolean cbor_require_map(bp_cbor_chunk_t *chunk) {
+    return cbor_require_major_type(chunk, CBOR_TYPE_MAP);
 }
 
-bp_cbor_chunk_t * cbor_require_map(tvbuff_t *tvb, packet_info *pinfo, proto_item *item, gint *offset) {
-    bp_cbor_chunk_t *head = bp_scan_cbor_chunk(tvb, *offset);
-    *offset += head->data_length;
-
-    if (head->type_major != CBOR_TYPE_MAP) {
-        expert_add_info_format(pinfo, item, &ei_cbor_wrong_type, "Should-be-map has type %d, should be %d", head->type_major, CBOR_TYPE_MAP);
-        bp_cbor_chunk_delete(head);
-        head = NULL;
+gboolean * cbor_require_boolean(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk) {
+    if (!cbor_require_major_type(chunk, CBOR_TYPE_FLOAT_CTRL)) {
+        return NULL;
     }
-    return head;
-}
 
-gboolean * cbor_require_boolean(const bp_cbor_chunk_t *chunk) {
-    switch (chunk->type_major) {
-        case CBOR_TYPE_FLOAT_CTRL: {
-            switch (chunk->type_minor) {
-                case CBOR_CTRL_TRUE:
-                case CBOR_CTRL_FALSE: {
-                    gboolean *value = NULL;
-                    value = wmem_new(wmem_file_scope(), gboolean);
-                    *value = (chunk->type_minor == CBOR_CTRL_TRUE);
-                    return value;
-                }
-                default:
-                    break;
-            }
-            break;
+    switch (chunk->type_minor) {
+        case CBOR_CTRL_TRUE:
+        case CBOR_CTRL_FALSE: {
+            gboolean *value = NULL;
+            value = wmem_new(alloc, gboolean);
+            *value = (chunk->type_minor == CBOR_CTRL_TRUE);
+            return value;
         }
         default:
+            wmem_list_append(chunk->errors, bp_cbor_error_new(
+                    chunk->_alloc, &ei_cbor_wrong_type,
+                    "Item has minor type %d, should be %d or %d",
+                    chunk->type_minor, CBOR_CTRL_TRUE, CBOR_CTRL_FALSE
+            ));
             break;
     }
     return NULL;
 }
 
-guint64 * cbor_require_uint64(const bp_cbor_chunk_t *chunk) {
-    switch (chunk->type_major) {
-        case CBOR_TYPE_UINT: {
-            guint64 *result = wmem_new(wmem_file_scope(), guint64);
-            *result = chunk->head_value;
-            return result;
-        }
-        default:
-            return NULL;
+guint64 * cbor_require_uint64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk) {
+    if (!cbor_require_major_type(chunk, CBOR_TYPE_UINT)) {
+        return NULL;
     }
+
+    guint64 *result = wmem_new(alloc, guint64);
+    *result = chunk->head_value;
+    return result;
 }
 
-gint64 * cbor_require_int64(const bp_cbor_chunk_t *chunk) {
+gint64 * cbor_require_int64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk) {
+    gint64 *result = NULL;
     switch (chunk->type_major) {
         case CBOR_TYPE_UINT:
         case CBOR_TYPE_NEGINT: {
-            gint64 *result = wmem_new(wmem_file_scope(), gint64);
-            *result = chunk->head_value;
-            return result;
+            guint64 clamped = chunk->head_value;
+            if (clamped > INT64_MAX) {
+                clamped = INT64_MAX;
+                wmem_list_append(chunk->errors, bp_cbor_error_new(
+                        chunk->_alloc, &ei_cbor_overflow,
+                        NULL
+                ));
+            }
+
+            result = wmem_new(alloc, gint64);
+            if (chunk->type_major == CBOR_TYPE_NEGINT) {
+                *result = -clamped - 1;
+            }
+            else {
+                *result = clamped;
+            }
+            break;
         }
         default:
-            return NULL;
+            wmem_list_append(chunk->errors, bp_cbor_error_new(
+                    chunk->_alloc, &ei_cbor_wrong_type,
+                    "Item has major type %d, should be %d or %d",
+                    chunk->type_major, CBOR_TYPE_UINT, CBOR_TYPE_NEGINT
+            ));
+            break;
     }
+    return result;
 }
 
-tvbuff_t * cbor_require_string(tvbuff_t *parent, const bp_cbor_chunk_t *chunk) {
+tvbuff_t * cbor_require_string(tvbuff_t *parent, bp_cbor_chunk_t *chunk) {
     tvbuff_t *result = NULL;
     switch (chunk->type_major) {
         case CBOR_TYPE_BYTESTRING:
@@ -324,36 +377,47 @@ tvbuff_t * cbor_require_string(tvbuff_t *parent, const bp_cbor_chunk_t *chunk) {
             result = tvb_new_subset_length(parent, chunk->start + chunk->head_length, chunk->head_value);
             break;
         default:
-            return NULL;
+            wmem_list_append(chunk->errors, bp_cbor_error_new(
+                    chunk->_alloc, &ei_cbor_wrong_type,
+                    "Item has major type %d, should be %d or %d",
+                    chunk->type_major, CBOR_TYPE_UINT, CBOR_TYPE_NEGINT
+            ));
+            break;
     }
     return result;
 }
 
-void bp_cbor_require_delete(gpointer ptr) {
-    file_scope_delete(ptr);
+proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
+    const header_field_info *hfinfo = proto_registrar_get_nth(hfindex);
+    proto_item *item;
+    if (IS_FT_UINT(hfinfo->type)) {
+        item = proto_tree_add_uint64(tree, hfindex, tvb, chunk->start, chunk->head_length, chunk->head_value);
+    }
+    else if (IS_FT_INT(hfinfo->type)) {
+        item = proto_tree_add_int64(tree, hfindex, tvb, chunk->start, chunk->head_length, chunk->head_value);
+    }
+    else {
+        item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, -1, ENC_NA);
+    }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
+    return item;
 }
 
 proto_item * proto_tree_add_cbor_boolean(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gboolean *value) {
     proto_item *item = proto_tree_add_boolean(tree, hfindex, tvb, chunk->start, chunk->data_length, value ? *value : FALSE);
-    if (!value) {
-        expert_add_info_format(pinfo, item, &ei_cbor_wrong_type, "Boolean value has type %d, should be %d", chunk->type_major, CBOR_TYPE_FLOAT_CTRL);
-    }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
 proto_item * proto_tree_add_cbor_uint64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value) {
     proto_item *item = proto_tree_add_uint64(tree, hfindex, tvb, chunk->start, chunk->head_length, value ? *value : 0);
-    if (!value) {
-        expert_add_info(pinfo, item, &ei_item_missing);
-    }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
 proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gint64 *value) {
     proto_item *item = proto_tree_add_int64(tree, hfindex, tvb, chunk->start, chunk->head_length, value ? *value : 0);
-    if (!value) {
-        expert_add_info(pinfo, item, &ei_item_missing);
-    }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
@@ -393,33 +457,31 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
     proto_item *item = proto_tree_add_item(tree, hfindex, tvb_flags, 0, flagsize, ENC_BIG_ENDIAN);
     proto_tree *subtree = proto_item_add_subtree(item, ett);
     proto_tree_add_bitmask_list_value(subtree, tvb_flags, 0, flagsize, fields, value ? *value : 0);
-
-    if (!value) {
-        expert_add_info(pinfo, item, &ei_item_missing);
-    }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
-proto_item * proto_tree_add_cbor_string(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *head) {
+proto_item * proto_tree_add_cbor_string(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk) {
     proto_item *item = NULL;
-    switch (head->type_major) {
+    switch (chunk->type_major) {
         case CBOR_TYPE_STRING: {
-            char *value = (char *)tvb_get_string_enc(wmem_packet_scope(), tvb, head->start + head->head_length, head->head_value, ENC_UTF_8);
+            char *value = (char *)tvb_get_string_enc(wmem_packet_scope(), tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_UTF_8);
             // This function needs a null-terminated string
-            item = proto_tree_add_string(tree, hfindex, tvb, head->start + head->head_length, head->head_value, value);
+            item = proto_tree_add_string(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, value);
             wmem_free(wmem_packet_scope(), value);
             break;
         }
         case CBOR_TYPE_BYTESTRING: {
-            guint8 *value = tvb_memdup(wmem_packet_scope(), tvb, head->start + head->head_length, head->head_value);
-            item = proto_tree_add_bytes(tree, hfindex, tvb, head->start + head->head_length, head->head_value, value);
+            guint8 *value = tvb_memdup(wmem_packet_scope(), tvb, chunk->start + chunk->head_length, chunk->head_value);
+            item = proto_tree_add_bytes(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, value);
             wmem_free(wmem_packet_scope(), value);
             break;
         }
         default:
-            item = proto_tree_add_item(tree, hfindex, tvb, head->start, head->head_length, ENC_NA);
+            item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, chunk->head_length, ENC_NA);
             expert_add_info(pinfo, item, &ei_cbor_wrong_type);
             break;
     }
+    bp_cbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
