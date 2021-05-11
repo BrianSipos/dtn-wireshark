@@ -5,6 +5,7 @@
 #include <epan/expert.h>
 #include <epan/reassemble.h>
 #include <epan/tvbuff-int.h>
+#include <epan/exceptions.h>
 #include <epan/dissectors/packet-udp.h>
 #include <epan/dissectors/packet-dtls.h>
 #include <stdio.h>
@@ -36,6 +37,8 @@ static const char *const proto_name_cose = "COSE";
 /// Protocol handles
 static int proto_cose = -1;
 
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Dissector handles
 static dissector_handle_t handle_cose_msg_hdr = NULL;
 static dissector_handle_t handle_cose_msg_tagged = NULL;
@@ -46,7 +49,7 @@ static dissector_handle_t handle_cose_encrypt0 = NULL;
 static dissector_handle_t handle_cose_mac = NULL;
 static dissector_handle_t handle_cose_mac0 = NULL;
 
-/// Dissect opaque CBOR parameters/results
+/// Dissect opaque data
 static dissector_table_t table_media = NULL;
 /// Dissect extension items
 static dissector_table_t table_cose_msg_tag = NULL;
@@ -225,18 +228,12 @@ static gint dissect_header_pair(dissector_table_t dis_int, dissector_table_t dis
             expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_value_partial_decode);
         }
     }
-    if ((sublen == 0) && table_media) {
-        sublen = dissector_try_string(
-            table_media,
-            "application/cbor",
-            tvb_value,
-            pinfo,
-            tree_label,
-            NULL
-        );
-    }
     if (sublen == 0) {
-        sublen = call_data_dissector(tvb_value, pinfo, tree_label);
+        TRY {
+            sublen = call_dissector(handle_cbor, tvb_value, pinfo, tree_label);
+        }
+        CATCH_ALL {}
+        ENDTRY;
     }
     return sublen;
 }
@@ -605,17 +602,21 @@ static void dissect_value_x5cert(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     tvbuff_t *tvb_item = cbor_require_bstr(tvb, chunk_item);
 
     if (tvb_item) {
-        // disallow name rewrite
+        // disallow column text rewrite
         gchar *info_text = g_strdup(col_get_text(pinfo->cinfo, COL_INFO));
 
-        dissector_try_string(
-            table_media,
-            "application/pkix-cert",
-            tvb_item,
-            pinfo,
-            tree,
-            NULL
-        );
+        TRY {
+            dissector_try_string(
+                table_media,
+                "application/pkix-cert",
+                tvb_item,
+                pinfo,
+                tree,
+                NULL
+            );
+        }
+        CATCH_ALL {}
+        ENDTRY;
 
         col_add_str(pinfo->cinfo, COL_INFO, info_text);
         g_free(info_text);
@@ -753,6 +754,7 @@ static void proto_reg_handoff_cose(void) {
     g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_reg_handoff_cose()\n");
 
     table_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
 
     dissector_add_string("media_type", "application/cose", handle_cose_msg_tagged);
     // RFC 8152 tags and names (Table 26)

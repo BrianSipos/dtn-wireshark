@@ -109,8 +109,8 @@ static int proto_bp_acme = -1;
 /// Protocol-level data
 static bp_acme_history_t *bp_acme_history = NULL;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 
 typedef enum {
     ACME_TOKEN_PART1 = 1,
@@ -198,14 +198,10 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                     expert_add_info(pinfo, item_key, &ei_acme_key_unknown);
 
                     tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);
-                    offset += dissector_try_string(
-                        dissect_media,
-                        "application/cbor",
-                        tvb_item,
-                        pinfo,
-                        tree_key,
-                        NULL
-                    );
+                    const int sublen = call_dissector(handle_cbor, tvb_item, pinfo, tree_key);
+                    if (sublen > 0) {
+                        offset += sublen;
+                    }
                     break;
                 }
             }
@@ -278,7 +274,7 @@ static void proto_register_bp_acme(void) {
 }
 
 static void proto_reg_handoff_bp_acme(void) {
-    dissect_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
 
     /* Packaged extensions */
     {

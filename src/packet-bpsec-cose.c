@@ -30,7 +30,6 @@ typedef enum {
 static int proto_bpsec_cose = -1;
 
 /// Dissect opaque CBOR parameters/results
-static dissector_table_t table_media = NULL;
 static dissector_table_t table_cose_msg = NULL;
 
 static dissector_handle_t handle_cose_msg_hdr = NULL;
@@ -161,7 +160,6 @@ static void proto_register_bpsec_cose(void) {
 }
 
 static void proto_reg_handoff_bpsec_cose(void) {
-    table_media = find_dissector_table("media_type");
     table_cose_msg = find_dissector_table("cose.msgtag");
     handle_cose_msg_hdr = find_dissector_add_dependency("cose.msg.headers", proto_bpsec_cose);
 

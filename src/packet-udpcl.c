@@ -7,6 +7,7 @@
 #include <epan/tvbuff-int.h>
 #include <epan/dissectors/packet-udp.h>
 #include <epan/dissectors/packet-dtls.h>
+#include <epan/exceptions.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include "bp_cbor.h"
@@ -49,16 +50,16 @@ static gboolean udpcl_decode_bundle = TRUE;
 /// Protocol handles
 static int proto_udpcl = -1;
 
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Dissector handles
 static dissector_handle_t handle_udpcl = NULL;
 static dissector_handle_t handle_dtls = NULL;
 static dissector_handle_t handle_bpv6 = NULL;
 static dissector_handle_t handle_bpv7 = NULL;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
 /// Dissect extension items
-static dissector_table_t dissect_ext = NULL;
+static dissector_table_t table_ext = NULL;
 
 /// Fragment reassembly
 static reassembly_table udpcl_reassembly_table;
@@ -249,16 +250,11 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
             }
         }
         if (sublen == 0) {
-            if (dissect_media) {
-                sublen = dissector_try_string(
-                    dissect_media,
-                    "application/cbor",
-                    tvb,
-                    pinfo,
-                    tree,
-                    NULL
-                );
+            TRY {
+                sublen = call_dissector(handle_cbor, tvb, pinfo, tree);
             }
+            CATCH_ALL {}
+            ENDTRY;
         }
     }
     else {
@@ -485,17 +481,10 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
                     continue;
                 }
                 tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset - init_offset);
-                int sublen = dissector_try_uint(dissect_ext, *key, tvb_item, pinfo, tree_ext_item);
+                int sublen = dissector_try_uint(table_ext, *key, tvb_item, pinfo, tree_ext_item);
                 if (sublen == 0) {
                     expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
-                    dissector_try_string(
-                        dissect_media,
-                        "application/cbor",
-                        tvb_item,
-                        pinfo,
-                        tree_ext_item,
-                        NULL
-                    );
+                    sublen = call_dissector(handle_cbor, tvb_item, pinfo, tree_ext_item);
                 }
             }
             proto_item_set_len(item_ext_map, offset);
@@ -526,7 +515,6 @@ static void udpcl_reinit(void) {
 
 /// Overall registration of the protocol
 static void proto_register_udpcl(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_register_udpcl()\n");
     proto_udpcl = proto_register_protocol(
         "DTN UDP Convergence Layer", /* name */
         "UDPCL", /* short name */
@@ -541,7 +529,7 @@ static void proto_register_udpcl(void) {
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
     handle_udpcl = register_dissector("udpcl", dissect_udpcl, proto_udpcl);
-    dissect_ext = register_dissector_table("udpcl.ext", "UDPCL Extension", proto_udpcl, FT_UINT16, BASE_DEC);
+    table_ext = register_dissector_table("udpcl.ext", "UDPCL Extension", proto_udpcl, FT_UINT16, BASE_DEC);
 
     module_t *module_udpcl = prefs_register_protocol(proto_udpcl, udpcl_reinit);
     prefs_register_bool_preference(
@@ -568,10 +556,9 @@ static void proto_register_udpcl(void) {
 }
 
 static void proto_reg_handoff_udpcl(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_reg_handoff_udpcl()\n");
     dissector_add_uint_with_preference("udp.port", UDPCL_PORT_NUM, handle_udpcl);
 
-    dissect_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
     handle_dtls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_udpcl);
     handle_bpv6 = find_dissector_add_dependency("bundle", proto_udpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_udpcl);

@@ -25,8 +25,8 @@
 /// Protocol handles
 static int proto_bpsec = -1;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Extension sub-dissectors
 static dissector_table_t param_dissectors = NULL;
 static dissector_table_t result_dissectors = NULL;
@@ -96,11 +96,13 @@ static expert_field ei_secsrc_diff = EI_INIT;
 static expert_field ei_ctxid_zero = EI_INIT;
 static expert_field ei_ctxid_priv = EI_INIT;
 static expert_field ei_target_invalid = EI_INIT;
+static expert_field ei_value_partial_decode = EI_INIT;
 static ei_register_info expertitems[] = {
     {&ei_secsrc_diff, {"bpsec.secsrc_diff", PI_SECURITY, PI_CHAT, "BPSec Security Source different from bundle Source", EXPFILL}},
     {&ei_ctxid_zero, {"bpsec.ctxid_zero", PI_SECURITY, PI_WARN, "BPSec Security Context ID zero is reserved", EXPFILL}},
     {&ei_ctxid_priv, {"bpsec.ctxid_priv", PI_SECURITY, PI_NOTE, "BPSec Security Context ID from private/experimental block", EXPFILL}},
     {&ei_target_invalid, {"bpsec.target_invalid", PI_PROTOCOL, PI_WARN, "Target block number not present", EXPFILL}},
+    {&ei_value_partial_decode, {"bpsec.value_partial_decode", PI_UNDECODED, PI_WARN, "Value data not fully dissected", EXPFILL}},
 };
 
 bpsec_id_t * bpsec_id_new(wmem_allocator_t *alloc, gint64 context_id, gint64 type_id) {
@@ -152,21 +154,11 @@ static gint dissect_value(dissector_handle_t dissector, gint64 *typeid, tvbuff_t
     if (dissector) {
         sublen = call_dissector_with_data(dissector, tvb, pinfo, tree, typeid);
         if ((sublen < 0) || ((guint)sublen < tvb_captured_length(tvb))) {
-            //expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_block_partial_decode);
+            expert_add_info(pinfo, proto_tree_get_parent(tree), &ei_value_partial_decode);
         }
     }
-    if ((sublen == 0) && dissect_media) {
-        sublen = dissector_try_string(
-            dissect_media,
-            "application/cbor",
-            tvb,
-            pinfo,
-            tree,
-            NULL
-        );
-    }
     if (sublen == 0) {
-        sublen = call_data_dissector(tvb, pinfo, tree);
+        sublen = call_dissector(handle_cbor, tvb, pinfo, tree);
     }
     return sublen;
 }
@@ -379,7 +371,7 @@ static void proto_register_bpsec(void) {
 }
 
 static void proto_reg_handoff_bpsec(void) {
-    dissect_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
 
     /* Packaged extensions */
     {

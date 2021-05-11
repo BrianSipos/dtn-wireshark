@@ -38,8 +38,8 @@ static int proto_bp_admin = -1;
 /// Protocol-level data
 static bp_history_t *bp_history = NULL;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Extension sub-dissectors
 static dissector_table_t block_dissectors = NULL;
 static dissector_table_t payload_dissectors_dtn_wkssp = NULL;
@@ -1211,19 +1211,12 @@ static gint dissect_carried_data(dissector_handle_t dissector, void *context, tv
         }
     }
 
-    if ((sublen == 0) && bp_payload_try_heur && dissect_media) {
+    if ((sublen == 0) && bp_payload_try_heur) {
         if (payload) {
             col_append_sep_fstr(pinfo->cinfo, COL_INFO, NULL, "Assumed CBOR");
         }
         TRY {
-            sublen = dissector_try_string(
-                dissect_media,
-                "application/cbor",
-                tvb,
-                pinfo,
-                tree,
-                NULL
-            );
+            sublen = call_dissector(handle_cbor, tvb, pinfo, tree);
         }
         CATCH_ALL {}
         ENDTRY;
@@ -1920,7 +1913,7 @@ static void proto_register_bp(void) {
 }
 
 static void proto_reg_handoff_bp(void) {
-    dissect_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
 
     /* Packaged extensions */
     {
