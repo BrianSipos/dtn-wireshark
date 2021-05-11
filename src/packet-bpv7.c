@@ -1,5 +1,4 @@
 #include "packet-bpv7.h"
-#include "bp_cbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
@@ -12,6 +11,7 @@
 #include <wsutil/crc32.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include "epan/wscbor.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -416,8 +416,11 @@ static const fragment_items payload_frag_items = {
     "Payload fragments"
 };
 
+static expert_field ei_invalid_framing = EI_INIT;
 static expert_field ei_invalid_bp_version = EI_INIT;
 static expert_field ei_eid_scheme_unknown = EI_INIT;
+static expert_field ei_eid_ssp_type_invalid = EI_INIT;
+static expert_field ei_eid_wkssp_unknown = EI_INIT;
 static expert_field ei_block_type_unknown = EI_INIT;
 static expert_field ei_block_type_dupe = EI_INIT;
 static expert_field ei_block_partial_decode = EI_INIT;
@@ -432,8 +435,11 @@ static expert_field ei_block_sec_bib_tgt = EI_INIT;
 static expert_field ei_block_sec_bcb_tgt = EI_INIT;
 static expert_field ei_admin_type_unknown = EI_INIT;
 static ei_register_info expertitems[] = {
+    {&ei_invalid_framing, {"bpv7.invalid_framing", PI_MALFORMED, PI_WARN, "Invalid framing", EXPFILL}},
     {&ei_invalid_bp_version, {"bpv7.invalid_bp_version", PI_MALFORMED, PI_ERROR, "Invalid BP version", EXPFILL}},
     {&ei_eid_scheme_unknown, {"bpv7.eid_scheme_unknown", PI_UNDECODED, PI_WARN, "Unknown Node ID scheme code", EXPFILL}},
+    {&ei_eid_ssp_type_invalid, {"bpv7.eid_ssp_type_invalid", PI_UNDECODED, PI_WARN, "Invalid scheme-specific part major type", EXPFILL}},
+    {&ei_eid_wkssp_unknown, {"bpv7.eid_wkssp_unknown", PI_UNDECODED, PI_WARN, "Unknown well-known scheme-specific code point", EXPFILL}},
     {&ei_block_type_unknown, {"bpv7.block_type_unknown", PI_UNDECODED, PI_WARN, "Unknown block type code", EXPFILL}},
     {&ei_block_type_dupe, {"bpv7.block_type_dupe", PI_PROTOCOL, PI_WARN, "Too many blocks of this type", EXPFILL}},
     {&ei_block_partial_decode, {"bpv7.block_partial_decode", PI_UNDECODED, PI_WARN, "Block data not fully dissected", EXPFILL}},
@@ -637,18 +643,18 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
     proto_tree *tree_eid = proto_item_add_subtree(item_eid, ett_eid);
     const gint eid_start = *offset;
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    cbor_require_array_size(chunk, 2, 2);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+    wscbor_require_array_size(chunk, 2, 2);
     if (!chunk) {
         proto_item_set_len(item_eid, *offset - eid_start);
         return item_eid;
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    const guint64 *scheme = cbor_require_uint64(alloc_eid, chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+    const guint64 *scheme = wscbor_require_uint64(alloc_eid, chunk);
     proto_item *item_scheme = proto_tree_add_cbor_uint64(tree_eid, hf_eid_scheme, pinfo, tvb, chunk, scheme);
     if (!scheme) {
-        bp_cbor_skip_next_item(wmem_packet_scope(), tvb, offset);
+        wscbor_skip_next_item(wmem_packet_scope(), tvb, offset);
         return item_eid;
     }
 
@@ -657,10 +663,10 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
     const char *dtn_serv = NULL;
     switch (*scheme) {
         case EID_SCHEME_DTN: {
-            chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
+            chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
             switch (chunk->type_major) {
                 case CBOR_TYPE_UINT: {
-                    const guint64 *ssp_code = cbor_require_uint64(wmem_packet_scope(), chunk);
+                    const guint64 *ssp_code = wscbor_require_uint64(wmem_packet_scope(), chunk);
                     proto_item *item = proto_tree_add_cbor_uint64(tree_eid, hf_eid_dtn_ssp_code, pinfo, tvb, chunk, ssp_code);
 
                     switch (*ssp_code) {
@@ -668,7 +674,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
                             dtn_wkssp = wmem_strdup(alloc_eid, "none");
                             break;
                         default:
-                            expert_add_info(pinfo, item, &ei_cbor_wrong_type);
+                            expert_add_info(pinfo, item, &ei_eid_wkssp_unknown);
                             break;
                     }
                     if (dtn_wkssp) {
@@ -677,7 +683,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
                     break;
                 }
                 case CBOR_TYPE_STRING: {
-                    char *ssp = cbor_require_tstr(wmem_packet_scope(), tvb, chunk);
+                    char *ssp = wscbor_require_tstr(wmem_packet_scope(), tvb, chunk);
                     proto_tree_add_cbor_tstr(tree_eid, hf_eid_dtn_ssp_text, pinfo, tvb, chunk);
                     wmem_strbuf_append_printf(uribuf, "dtn:%s", ssp);
 
@@ -695,7 +701,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
                 }
                 default: {
                     proto_item *item = proto_tree_add_string(tree_eid, hf_eid_dtn_ssp_text, tvb, chunk->start, chunk->head_length + chunk->head_value, "");
-                    expert_add_info(pinfo, item, &ei_cbor_wrong_type);
+                    expert_add_info(pinfo, item, &ei_eid_ssp_type_invalid);
                     break;
                 }
             }
@@ -703,15 +709,15 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
             break;
         }
         case EID_SCHEME_IPN: {
-            chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-            cbor_require_array_size(chunk, 2, 2);
-            if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk)) {
-                chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-                const guint64 *node = cbor_require_uint64(wmem_packet_scope(), chunk);
+            chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+            wscbor_require_array_size(chunk, 2, 2);
+            if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk)) {
+                chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+                const guint64 *node = wscbor_require_uint64(wmem_packet_scope(), chunk);
                 proto_tree_add_cbor_uint64(tree_eid, hf_eid_ipn_node, pinfo, tvb, chunk, node);
 
-                chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-                const guint64 *service = cbor_require_uint64(wmem_packet_scope(), chunk);
+                chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+                const guint64 *service = wscbor_require_uint64(wmem_packet_scope(), chunk);
                 proto_tree_add_cbor_uint64(tree_eid, hf_eid_ipn_service, pinfo, tvb, chunk, service);
 
                 wmem_strbuf_append_printf(uribuf, "ipn:%"PRIu64".%"PRIu64, node ? *node : 0, service ? *service : 0);
@@ -719,7 +725,7 @@ proto_item * proto_tree_add_cbor_eid(proto_tree *tree, int hfindex, int hfindex_
             break;
         }
         default:
-            bp_cbor_skip_next_item(wmem_packet_scope(), tvb, offset);
+            wscbor_skip_next_item(wmem_packet_scope(), tvb, offset);
             expert_add_info(pinfo, item_scheme, &ei_eid_scheme_unknown);
             break;
     }
@@ -764,9 +770,9 @@ static void proto_tree_add_dtn_time(proto_tree *tree, int hfindex, packet_info *
     proto_tree *tree_time = proto_item_add_subtree(item_time, ett_time);
     const gint offset_start = *offset;
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
     if (chunk) {
-        const guint64 *dtntime = cbor_require_uint64(wmem_packet_scope(), chunk);
+        const guint64 *dtntime = wscbor_require_uint64(wmem_packet_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_time, hf_time_dtntime, pinfo, tvb, chunk, dtntime);
 
         if (dtntime) {
@@ -811,15 +817,15 @@ static void proto_tree_add_cbor_timestamp(proto_tree *tree, int hfindex, packet_
     proto_item *item_ts = proto_tree_add_item(tree, hfindex, tvb, *offset, -1, ENC_NA);
     proto_tree *tree_ts = proto_item_add_subtree(item_ts, ett_create_ts);
 
-    bp_cbor_chunk_t *chunk_ts = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    cbor_require_array_size(chunk_ts, 2, 2);
-    bp_cbor_chunk_mark_errors(pinfo, item_ts, chunk_ts);
-    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk_ts)) {
+    wscbor_chunk_t *chunk_ts = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+    wscbor_require_array_size(chunk_ts, 2, 2);
+    wscbor_chunk_mark_errors(pinfo, item_ts, chunk_ts);
+    if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk_ts)) {
         bp_dtn_time_t time;
         proto_tree_add_dtn_time(tree_ts, hf_create_ts_time, pinfo, tvb, offset, &time);
 
-        bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-        const guint64 *seqno = cbor_require_uint64(wmem_file_scope(), chunk);
+        wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+        const guint64 *seqno = wscbor_require_uint64(wmem_file_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_ts, hf_create_ts_seqno, pinfo, tvb, chunk, seqno);
 
         if (ts) {
@@ -915,32 +921,32 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     gint offset = start;
     block->item_block = item_block;
 
-    bp_cbor_chunk_t *chunk_block = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_block, 8, 11);
-    bp_cbor_chunk_mark_errors(pinfo, item_block, chunk_block);
-    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_block)) {
+    wscbor_chunk_t *chunk_block = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_block, 8, 11);
+    wscbor_chunk_mark_errors(pinfo, item_block, chunk_block);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_block)) {
         return offset - start;
     }
 #if 0
     proto_item_append_text(item_block, ", Items: %" PRIu64, chunk_block->head_value);
 #endif
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *version = cbor_require_uint64(wmem_packet_scope(), chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *version = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_item *item_version = proto_tree_add_cbor_uint64(tree_block, hf_primary_version, pinfo, tvb, chunk, version);
     field_ix++;
     if (version && (*version != 7)) {
         expert_add_info(pinfo, item_version, &ei_invalid_bp_version);
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *flags = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *flags = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_bitmask(tree_block, hf_primary_bundle_flags, ett_bundle_flags, bundle_flags, pinfo, tvb, chunk, flags);
     field_ix++;
     block->flags = (flags ? *flags : 0);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *crc_type = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *crc_type = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_crc_type, pinfo, tvb, chunk, crc_type);
     field_ix++;
     block->crc_type = (crc_type ? *crc_type : BP_CRC_NONE);
@@ -961,8 +967,8 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     proto_tree_add_cbor_timestamp(tree_block, hf_primary_create_ts, pinfo, tvb, &offset, &(block->ts));
     field_ix++;
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *lifetime = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *lifetime = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_block, hf_primary_lifetime, pinfo, tvb, chunk, lifetime);
     if (lifetime) {
         nstime_t lifetime_exp = dtn_to_delta(*lifetime);
@@ -980,21 +986,21 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 
     // optional items
     if (flags && (*flags & BP_BUNDLE_IS_FRAGMENT)) {
-        if (!cbor_require_array_size(chunk_block, field_ix + 1, field_ix + 3)) {
+        if (!wscbor_require_array_size(chunk_block, field_ix + 1, field_ix + 3)) {
             // Skip whole array
             offset = start;
-            bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+            wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
 
             return offset - start;
         }
 
-        chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        block->frag_offset = cbor_require_uint64(wmem_file_scope(), chunk);
+        chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        block->frag_offset = wscbor_require_uint64(wmem_file_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_block, hf_primary_frag_offset, pinfo, tvb, chunk, block->frag_offset);
         field_ix++;
 
-        chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        block->total_len = cbor_require_uint64(wmem_file_scope(), chunk);
+        chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        block->total_len = wscbor_require_uint64(wmem_file_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_block, hf_primary_total_length, pinfo, tvb, chunk, block->total_len);
         field_ix++;
     }
@@ -1004,16 +1010,16 @@ static gint dissect_block_primary(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
             break;
         case BP_CRC_16:
         case BP_CRC_32: {
-            if (!cbor_require_array_size(chunk_block, field_ix + 1, field_ix + 1)) {
+            if (!wscbor_require_array_size(chunk_block, field_ix + 1, field_ix + 1)) {
                 // Skip whole array
                 offset = start;
-                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
 
                 return offset - start;
             }
 
-            chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            tvbuff_t *crc_field = cbor_require_bstr(tvb, chunk);
+            chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            tvbuff_t *crc_field = wscbor_require_bstr(tvb, chunk);
             field_ix++;
             block->crc_field = crc_field;
 
@@ -1037,18 +1043,18 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     gint offset = start;
     block->item_block = item_block;
 
-    bp_cbor_chunk_t *chunk_block = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_block, 5, 6);
-    bp_cbor_chunk_mark_errors(pinfo, item_block, chunk_block);
-    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_block)) {
+    wscbor_chunk_t *chunk_block = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_block, 5, 6);
+    wscbor_chunk_mark_errors(pinfo, item_block, chunk_block);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_block)) {
         return offset - start;
     }
 #if 0
     proto_item_append_text(item_block, ", Items: %" PRIu64, chunk_block->head_value);
 #endif
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *type_code = cbor_require_uint64(wmem_file_scope(), chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *type_code = wscbor_require_uint64(wmem_file_scope(), chunk);
     proto_item *item_type = proto_tree_add_cbor_uint64(tree_block, hf_canonical_type_code, pinfo, tvb, chunk, type_code);
     field_ix++;
     block->type_code = type_code;
@@ -1087,8 +1093,8 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
         }
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *block_num = cbor_require_uint64(wmem_file_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *block_num = wscbor_require_uint64(wmem_file_scope(), chunk);
     proto_item *item_block_num = proto_tree_add_cbor_uint64(tree_block, hf_canonical_block_num, pinfo, tvb, chunk, block_num);
     field_ix++;
     block->block_number = block_num;
@@ -1096,14 +1102,14 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
         proto_item_append_text(item_block, ", Block Num: %" PRIu64, *block_num);
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *flags = cbor_require_uint64(wmem_file_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *flags = wscbor_require_uint64(wmem_file_scope(), chunk);
     proto_tree_add_cbor_bitmask(tree_block, hf_canonical_block_flags, ett_block_flags, block_flags, pinfo, tvb, chunk, flags);
     field_ix++;
     block->flags = (flags ? *flags : 0);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *crc_type = cbor_require_uint64(wmem_file_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *crc_type = wscbor_require_uint64(wmem_file_scope(), chunk);
     proto_item *item_crc_type = proto_tree_add_cbor_uint64(tree_block, hf_crc_type, pinfo, tvb, chunk, crc_type);
     field_ix++;
     block->crc_type = (crc_type ? *crc_type : BP_CRC_NONE);
@@ -1111,16 +1117,14 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
         proto_item_append_text(item_block, ", CRC Type: %s", val64_to_str(*crc_type, crc_vals, "%" PRIu64));
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = cbor_require_bstr(tvb, chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *tvb_data = wscbor_require_bstr(tvb, chunk);
     field_ix++;
     block->data = tvb_data;
+
     const guint tvb_data_len = (tvb_data ? tvb_captured_length(tvb_data) : 0);
     proto_item *item_data = proto_tree_add_uint64(tree_block, hf_canonical_data, tvb_data, 0, tvb_data_len, tvb_data_len);
     proto_tree *tree_data = proto_item_add_subtree(item_data, ett_canonical_data);
-    if (!tvb_data) {
-        expert_add_info_format(pinfo, item_data, &ei_item_missing, "Data field is missing");
-    }
     block->tree_data = tree_data;
 
     switch (block->crc_type) {
@@ -1128,16 +1132,16 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
             break;
         case BP_CRC_16:
         case BP_CRC_32: {
-            if (!cbor_require_array_size(chunk_block, field_ix + 1, field_ix + 1)) {
+            if (!wscbor_require_array_size(chunk_block, field_ix + 1, field_ix + 1)) {
                 // Skip whole array
                 offset = start;
-                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
 
                 return offset - start;
             }
 
-            chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            tvbuff_t *crc_field = cbor_require_bstr(tvb, chunk);
+            chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            tvbuff_t *crc_field = wscbor_require_bstr(tvb, chunk);
             field_ix++;
             block->crc_field = crc_field;
 
@@ -1262,14 +1266,14 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
     const guint buflen = tvb_captured_length(tvb);
 
     // Require indefinite-length array type
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     proto_item *item_head = proto_tree_add_item(tree_bundle, hf_bundle_head, tvb, chunk->start, chunk->data_length, ENC_NA);
-    if (chunk->type_major != CBOR_TYPE_ARRAY) {
-        expert_add_info_format(pinfo, item_head, &ei_cbor_wrong_type, "Bundle root has type %d, should be %d", chunk->type_major, CBOR_TYPE_ARRAY);
+    wscbor_require_array(chunk);
+    if (wscbor_chunk_mark_errors(pinfo, item_head, chunk)) {
         return buflen;
     }
     else if (chunk->type_minor != 31) {
-        expert_add_info_format(pinfo, item_head, &ei_cbor_array_wrong_size, "Expected indefinite length array");
+        expert_add_info_format(pinfo, item_head, &ei_invalid_framing, "Expected indefinite length array");
         // continue on even for definite-length array
     }
 
@@ -1277,13 +1281,13 @@ static int dissect_bp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void 
     while (TRUE) {
         if (offset >= (gint)buflen) {
             proto_item *item_break = proto_tree_add_item(tree_bundle, hf_bundle_break, tvb, offset, -1, ENC_NA);
-            expert_add_info_format(pinfo, item_break, &ei_cbor_array_wrong_size, "Array break missing");
+            expert_add_info_format(pinfo, item_break, &ei_invalid_framing, "Array break missing");
             break;
         }
 
         // Either detect BREAK or decode block
-        chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        if (bp_cbor_is_indefinite_break(chunk)) {
+        chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        if (wscbor_is_indefinite_break(chunk)) {
             proto_tree_add_cbor_ctrl(tree_bundle, hf_bundle_break, pinfo, tvb, chunk);
             break;
         }
@@ -1411,14 +1415,14 @@ static gboolean proto_tree_add_status_assertion(proto_tree *tree, int hfassert, 
 
     gboolean result = FALSE;
 
-    bp_cbor_chunk_t *chunk_assert = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-    cbor_require_array_size(chunk_assert, 1, 2);
-    bp_cbor_chunk_mark_errors(pinfo, item_assert, chunk_assert);
-    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk_assert)) {
+    wscbor_chunk_t *chunk_assert = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+    wscbor_require_array_size(chunk_assert, 1, 2);
+    wscbor_chunk_mark_errors(pinfo, item_assert, chunk_assert);
+    if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, offset, chunk_assert)) {
         proto_tree *tree_assert = proto_item_add_subtree(item_assert, ett_status_assert);
 
-        bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, offset);
-        gboolean *status_val = cbor_require_boolean(wmem_packet_scope(), chunk);
+        wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, offset);
+        gboolean *status_val = wscbor_require_boolean(wmem_packet_scope(), chunk);
         proto_tree_add_cbor_boolean(tree_assert, hf_status_assert_val, pinfo, tvb, chunk, status_val);
         if (status_val) {
             result = *status_val;
@@ -1445,14 +1449,14 @@ static int dissect_payload_admin(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item *item_rec = proto_tree_add_item(tree, proto_bp_admin, tvb, 0, -1, ENC_NA);
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk_rec = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_rec, 1, 2);
-    bp_cbor_chunk_mark_errors(pinfo, item_rec, chunk_rec);
-    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_rec)) {
+    wscbor_chunk_t *chunk_rec = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_rec, 1, 2);
+    wscbor_chunk_mark_errors(pinfo, item_rec, chunk_rec);
+    if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_rec)) {
         proto_tree *tree_rec = proto_item_add_subtree(item_rec, ett_admin);
 
-        bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        const guint64 *type_code = cbor_require_uint64(wmem_packet_scope(), chunk);
+        wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        const guint64 *type_code = wscbor_require_uint64(wmem_packet_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_rec, hf_admin_record_type, pinfo, tvb, chunk, type_code);
 
         dissector_handle_t admin_dissect = NULL;
@@ -1481,26 +1485,26 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_tree *tree_status = proto_item_add_subtree(item_status, ett_status_rep);
     guint status_field_ix = 0;
 
-    bp_cbor_chunk_t *chunk_status = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_status, 4, 6);
-    bp_cbor_chunk_mark_errors(pinfo, item_status, chunk_status);
-    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_status)) {
+    wscbor_chunk_t *chunk_status = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_status, 4, 6);
+    wscbor_chunk_mark_errors(pinfo, item_status, chunk_status);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_status)) {
         proto_item_set_len(item_status, offset - chunk_status->start);
         return offset;
     }
 
-    bp_cbor_chunk_t *chunk;
+    wscbor_chunk_t *chunk;
     gboolean status_received = FALSE;
     gboolean status_forwarded = FALSE;
     gboolean status_delivered = FALSE;
     gboolean status_deleted = FALSE;
 
-    bp_cbor_chunk_t *chunk_info = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_info, 4, 4);
+    wscbor_chunk_t *chunk_info = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_info, 4, 4);
     {
         proto_item *item_info = proto_tree_add_item(tree_status, hf_status_rep_status_info, tvb, offset, -1, ENC_NA);
-        bp_cbor_chunk_mark_errors(pinfo, item_info, chunk_info);
-        if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_info)) {
+        wscbor_chunk_mark_errors(pinfo, item_info, chunk_info);
+        if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_info)) {
             proto_tree *tree_info = proto_item_add_subtree(item_info, ett_status_info);
 
             status_received = proto_tree_add_status_assertion(tree_info, hf_status_rep_received, pinfo, tvb, &offset);
@@ -1513,8 +1517,8 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         status_field_ix++;
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *reason_code = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *reason_code = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_status, hf_status_rep_reason_code, pinfo, tvb, chunk, reason_code);
     status_field_ix++;
 
@@ -1529,15 +1533,15 @@ static int dissect_status_report(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     bp_bundle_ident_t *subj = bp_bundle_ident_new(wmem_file_scope(), subj_eid, subj_ts, NULL, NULL);
 
     if (chunk_info->head_value > status_field_ix) {
-        chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        subj->frag_offset = cbor_require_uint64(wmem_file_scope(), chunk);
+        chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        subj->frag_offset = wscbor_require_uint64(wmem_file_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_status, hf_status_rep_subj_frag_offset, pinfo, tvb, chunk, subj->frag_offset);
         status_field_ix++;
     }
 
     if (chunk_info->head_value > status_field_ix) {
-        chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-        subj->total_len = cbor_require_uint64(wmem_file_scope(), chunk);
+        chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        subj->total_len = wscbor_require_uint64(wmem_file_scope(), chunk);
         proto_tree_add_cbor_uint64(tree_status, hf_status_rep_subj_payload_len, pinfo, tvb, chunk, subj->total_len);
         status_field_ix++;
     }
@@ -1759,8 +1763,8 @@ static int dissect_block_prev_node(tvbuff_t *tvb, packet_info *pinfo, proto_tree
 static int dissect_block_bundle_age(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *age = cbor_require_uint64(wmem_packet_scope(), chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *age = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree, hf_bundle_age_time, pinfo, tvb, chunk, age);
 
     return offset;
@@ -1771,18 +1775,18 @@ static int dissect_block_bundle_age(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 static int dissect_block_hop_count(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk, 2, 2);
-    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk)) {
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk, 2, 2);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk)) {
         return offset;
     }
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *limit = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *limit = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree, hf_hop_count_limit, pinfo, tvb, chunk, limit);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    const guint64 *current = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    const guint64 *current = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree, hf_hop_count_current, pinfo, tvb, chunk, current);
 
     return offset;
@@ -1866,7 +1870,7 @@ static void proto_register_bp(void) {
     proto_register_field_array(proto_bp, fields, array_length(fields));
     proto_register_subtree_array(ett, array_length(ett));
     expert_module_t *expert = expert_register_protocol(proto_bp);
-    bp_cbor_init(expert);
+    wscbor_init(expert);
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
     register_dissector("bpv7", dissect_bp, proto_bp);

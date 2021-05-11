@@ -10,8 +10,8 @@
 #include <epan/exceptions.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "bp_cbor.h"
 #include "packet-udpcl.h"
+#include "epan/wscbor.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -219,7 +219,7 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
 
     // Peek at first octet
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
-    bp_cbor_chunk_t *first_head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &sublen);
+    wscbor_chunk_t *first_head = wscbor_chunk_read(wmem_packet_scope(), tvb, &sublen);
     sublen = 0;
 
     if (first_octet == 0x06) {
@@ -273,27 +273,27 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, -1, ENC_NA);
     proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
 
-    bp_cbor_chunk_t *chunk_xfer = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_array_size(chunk_xfer, 4, 4);
-    if (bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_xfer)) {
+    wscbor_chunk_t *chunk_xfer = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_xfer, 4, 4);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_xfer)) {
         proto_item_set_len(item_xfer, offset);
         return offset;
     }
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *xfer_id = cbor_require_uint64(wmem_packet_scope(), chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_id = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_id, pinfo, tvb, chunk, xfer_id);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *xfer_tot_len = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_tot_len = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *xfer_frag_offset = cbor_require_uint64(wmem_packet_scope(), chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_frag_offset = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
 
-    chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *xfer_fragment = cbor_require_bstr(tvb, chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *xfer_fragment = wscbor_require_bstr(tvb, chunk);
     proto_tree_add_cbor_bstr(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
 
     if (udpcl_desegment_transfer
@@ -375,8 +375,8 @@ static int dissect_return_accept(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item *item_rtn = proto_tree_add_item(tree_ext_item, hf_ext_rtn, tvb, offset, -1, ENC_NA);
     proto_tree *tree_rtn = proto_item_add_subtree(item_rtn, ett_ext_rtn);
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *interval = cbor_require_uint64(wmem_packet_scope(), chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *interval = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_rtn, hf_rtn_interval, pinfo, tvb, chunk, interval);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
@@ -394,8 +394,8 @@ static int dissect_nodeid(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ex
     proto_item *item_nodeid = proto_tree_add_item(tree_ext_item, hf_ext_nodeid, tvb, offset, -1, ENC_NA);
     proto_tree *tree_nodeid = proto_item_add_subtree(item_nodeid, ett_ext_nodeid);
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_major_type(chunk, CBOR_TYPE_STRING);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_major_type(chunk, CBOR_TYPE_STRING);
     proto_tree_add_cbor_tstr(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
@@ -411,7 +411,7 @@ static int dissect_starttls(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     gint offset = 0;
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Initiate DTLS");
 
-    bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+    wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
     // no real value
     proto_tree_add_item(tree_ext_item, hf_ext_starttls, tvb, 0, offset, ENC_NA);
 
@@ -437,7 +437,7 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
     while ((guint)offset < buflen) {
         // Peek at first octet
         const guint8 first_octet = tvb_get_guint8(tvb, offset);
-        bp_cbor_chunk_t *first_head = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        wscbor_chunk_t *first_head = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
         offset -= first_head->data_length;
 
         if (first_octet == 0x00) {
@@ -469,14 +469,14 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             proto_tree *tree_ext_map = proto_item_add_subtree(item_ext_map, ett_ext_map);
 
             for (gint64 ix = 0; ix < count; ++ix) {
-                bp_cbor_chunk_t *key_chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                gint64 *key = cbor_require_int64(wmem_packet_scope(), key_chunk);
+                wscbor_chunk_t *key_chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                gint64 *key = wscbor_require_int64(wmem_packet_scope(), key_chunk);
                 proto_item *item_ext_item = proto_tree_add_cbor_int64(tree_ext_map, hf_ext_id, pinfo, tvb, key_chunk, key);
                 proto_tree *tree_ext_item = proto_item_add_subtree(item_ext_item, ett_ext_item);
 
                 // Skip the item to detect its length for subset TVB
                 const guint init_offset = offset;
-                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 if (!key) {
                     continue;
                 }

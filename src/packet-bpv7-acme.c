@@ -1,11 +1,11 @@
 #include "packet-bpv7.h"
-#include "bp_cbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
 #include <epan/expert.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include "epan/wscbor.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -164,37 +164,37 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
     proto_item *item_token_part1 = NULL;
     proto_item *item_key_auth_digest = NULL;
 
-    bp_cbor_chunk_t *chunk_msg = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    cbor_require_map(chunk_msg);
+    wscbor_chunk_t *chunk_msg = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_map(chunk_msg);
     proto_item *item_acme = proto_tree_add_cbor_container(tree, proto_bp_acme, pinfo, tvb, chunk_msg);
     proto_item_append_text(item_acme, ": %s Bundle", is_req ? "Challenge" : "Response");
     proto_tree *tree_acme = proto_item_add_subtree(item_acme, ett_acme);
-    if (!bp_cbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_msg)) {
+    if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_msg)) {
         for (guint64 ix = 0; ix < chunk_msg->head_value; ++ix) {
-            bp_cbor_chunk_t *chunk_key = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            gint64 *key = cbor_require_int64(wmem_packet_scope(), chunk_key);
+            wscbor_chunk_t *chunk_key = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            gint64 *key = wscbor_require_int64(wmem_packet_scope(), chunk_key);
             proto_item *item_key = proto_tree_add_cbor_int64(tree_acme, hf_acme_key, pinfo, tvb, chunk_key, key);
             proto_tree *tree_key = proto_item_add_subtree(item_key, ett_acme_key);
 
             if (!key) {
-                bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 continue;
             }
             switch (*key) {
                 case ACME_TOKEN_PART1: {
-                    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    token_part1 = cbor_require_bstr(tvb, chunk);
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                    token_part1 = wscbor_require_bstr(tvb, chunk);
                     item_token_part1 = proto_tree_add_cbor_bstr(tree_key, hf_token_part1, pinfo, tvb, chunk);
                     break;
                 }
                 case ACME_KEY_AUTH_DIGEST: {
-                    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
                     item_key_auth_digest = proto_tree_add_cbor_bstr(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
                     break;
                 }
                 default: {
                     guint init_offset = offset;
-                    bp_cbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                    wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                     expert_add_info(pinfo, item_key, &ei_acme_key_unknown);
 
                     tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);

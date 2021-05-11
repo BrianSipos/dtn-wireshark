@@ -1,13 +1,13 @@
 #include "packet-bpsec.h"
 #include "packet-bpv7.h"
 #include "packet-cose.h"
-#include "bp_cbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
 #include <epan/expert.h>
 #include <epan/to_str.h>
 #include <inttypes.h>
+#include "epan/wscbor.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -78,8 +78,8 @@ static int *ett[] = {
 static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk_flags = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *flags = cbor_require_uint64(wmem_packet_scope(), chunk_flags);
+    wscbor_chunk_t *chunk_flags = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *flags = wscbor_require_uint64(wmem_packet_scope(), chunk_flags);
     proto_tree_add_cbor_bitmask(tree, hf_aad_scope, ett_aad_scope, aad_scope, pinfo, tvb, chunk_flags, flags);
 
     return offset;
@@ -90,8 +90,8 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
 static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk_prot_bstr = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *prot_bstr = cbor_require_bstr(tvb, chunk_prot_bstr);
+    wscbor_chunk_t *chunk_prot_bstr = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *prot_bstr = wscbor_require_bstr(tvb, chunk_prot_bstr);
     proto_item *item_prot_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_prot_bstr, pinfo, tvb, chunk_prot_bstr);
     if (prot_bstr) {
         proto_tree *tree_prot_bstr = proto_item_add_subtree(item_prot_bstr, ett_addl_prot_bstr);
@@ -122,8 +122,8 @@ static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     DISSECTOR_ASSERT(typeid != NULL);
     gint offset = 0;
 
-    bp_cbor_chunk_t *chunk = bp_cbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = cbor_require_bstr(tvb, chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *tvb_data = wscbor_require_bstr(tvb, chunk);
 
     proto_item *item_msg = proto_tree_add_cbor_bstr(tree, hf_cose_msg, pinfo, tvb, chunk);
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);

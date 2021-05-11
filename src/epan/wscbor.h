@@ -1,6 +1,6 @@
 
-#ifndef WIRESHARK_PLUGIN_SRC_BP_CBOR_H_
-#define WIRESHARK_PLUGIN_SRC_BP_CBOR_H_
+#ifndef __WSCBOR_H__
+#define __WSCBOR_H__
 
 #include <ws_symbol_export.h>
 #include <epan/tvbuff.h>
@@ -18,39 +18,10 @@
 extern "C" {
 #endif
 
-extern expert_field ei_cbor_wrong_type;
-extern expert_field ei_cbor_array_wrong_size;
-extern expert_field ei_item_missing;
-
 /** Register expert info and other wireshark data.
  * @param expert The parent module object.
  */
-void bp_cbor_init(expert_module_t *expert);
-
-/// The basic header structure of CBOR encoding
-typedef struct {
-    /// The start offset of this header
-    gint start;
-    /// The length of just this header
-    gint length;
-    /// The expert info object (if error)
-    expert_field *error;
-
-    /// Major type of this item (cbor_type)
-    guint8 type_major;
-    /// Minor type of this item
-    guint8 type_minor;
-    /// Raw head "value" which may be from the @c type_minor
-    guint64 rawvalue;
-} bp_cbor_head_t;
-
-/** Read just the CBOR head integer.
- */
-bp_cbor_head_t * bp_cbor_head_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint start);
-
-/** Force a head to be freed.
- */
-void bp_cbor_head_free(wmem_allocator_t *alloc, bp_cbor_head_t *head);
+void wscbor_init(expert_module_t *expert);
 
 /// The same enumeration from libcbor-0.5
 typedef enum cbor_type {
@@ -79,7 +50,7 @@ typedef struct {
     expert_field *ei;
     /// Optional specific text
     const char *msg;
-} bp_cbor_error_t;
+} wscbor_error_t;
 
 /** Construct a new error object.
  *
@@ -88,7 +59,7 @@ typedef struct {
  * @param format If non-NULL, a message format string.
  * @return The new object.
  */
-bp_cbor_error_t * bp_cbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...);
+wscbor_error_t * wscbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...);
 
 /// A data-containing, optionally-tagged chunk of CBOR
 typedef struct {
@@ -101,7 +72,7 @@ typedef struct {
     gint head_length;
     /// The length of this chunk and its immediate definite data (i.e. strings)
     gint data_length;
-    /// Errors processing this chunk (type bp_cbor_error_t*)
+    /// Errors processing this chunk (type wscbor_error_t*)
     wmem_list_t *errors;
     /// Tags on this chunk, in encoded order (type guint64*)
     wmem_list_t *tags;
@@ -113,7 +84,7 @@ typedef struct {
     guint8 type_minor;
     /// The header-encoded value
     guint64 head_value;
-} bp_cbor_chunk_t;
+} wscbor_chunk_t;
 
 /** Scan for a tagged chunk of headers.
  * The chunk of byte string and text string items includes the data content
@@ -125,31 +96,32 @@ typedef struct {
  * @return The chunk of data found, including any errors.
  * This never returns NULL.
  */
-bp_cbor_chunk_t * bp_cbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
+wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
 
 /** Free a chunk and its lists.
  */
-void bp_cbor_chunk_free(bp_cbor_chunk_t *chunk);
+void wscbor_chunk_free(wscbor_chunk_t *chunk);
 
 /** After both reading and decoding a chunk, report on any errors found.
  * @param pinfo The associated packet.
  * @param item The associated tree item.
  * @param chunk The chunk with possible errors.
+ * @return The error count.
  */
-void bp_cbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const bp_cbor_chunk_t *chunk);
+guint64 wscbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const wscbor_chunk_t *chunk);
 
 /** Determine if a chunk has errors.
  * @param chunk The chunk with possible errors.
  * @return The error count.
  */
-guint64 bp_cbor_has_errors(const bp_cbor_chunk_t *chunk);
+guint64 wscbor_has_errors(const wscbor_chunk_t *chunk);
 
 /** Determine if an indefinite break is present.
  *
  * @param chunk The chunk to check.
  * @return True if it's an indefinite break.
  */
-gboolean bp_cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk);
+gboolean wscbor_is_indefinite_break(const wscbor_chunk_t *chunk);
 
 /** Recursively skip items from a stream.
  *
@@ -158,9 +130,11 @@ gboolean bp_cbor_is_indefinite_break(const bp_cbor_chunk_t *chunk);
  * @param[in,out] offset The initial offset to read and skip over.
  * @return True if the skipped item was an indefinite break.
  */
-gboolean bp_cbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
+gboolean wscbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset);
 
 /** Skip over an item if a chunk has errors.
+ * This allows skipping an entire array or map if the major type or size is
+ * not as expected.
  *
  * @param alloc The allocator to use.
  * @param tvb The data buffer.
@@ -168,112 +142,111 @@ gboolean bp_cbor_skip_next_item(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *of
  * @param chunk The chunk with possible errors.
  * @return True if there were errors and the item skipped.
  */
-gboolean bp_cbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset, const bp_cbor_chunk_t *chunk);
+gboolean wscbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *offset, const wscbor_chunk_t *chunk);
 
 
 /** Require a specific item major type.
  *
- * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @param major The required major type.
  * @return True if the item is that type.
  */
-gboolean cbor_require_major_type(bp_cbor_chunk_t *chunk, cbor_type major);
+gboolean wscbor_require_major_type(wscbor_chunk_t *chunk, cbor_type major);
 
 /** Require an array item.
  *
- * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return True if the item is an array.
  */
-gboolean cbor_require_array(bp_cbor_chunk_t *chunk);
+gboolean wscbor_require_array(wscbor_chunk_t *chunk);
 
 /** Require an array have a specific ranged size.
  *
- * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @param count_min The minimum acceptable size.
  * @param count_max The maximum acceptable size.
  * @return True if the size is acceptable.
  */
-gboolean cbor_require_array_size(bp_cbor_chunk_t *chunk, guint64 count_min, guint64 count_max);
+gboolean wscbor_require_array_size(wscbor_chunk_t *chunk, guint64 count_min, guint64 count_max);
 
 /** Require a map item.
  *
- * @param[in,out] chunk The chunk to check (and mark errors on).
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return True if the item is a map.
  */
-gboolean cbor_require_map(bp_cbor_chunk_t *chunk);
+gboolean wscbor_require_map(wscbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a boolean value.
  *
  * @param alloc The allocator to use.
- * @param chunk The chunk to read from.
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return Pointer to the boolean value, if the item was boolean.
- * The value can be deleted with bp_cbor_require_delete().
+ * The value can be deleted with wscbor_require_delete().
  */
-gboolean * cbor_require_boolean(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
+gboolean * wscbor_require_boolean(wmem_allocator_t *alloc, wscbor_chunk_t *chunk);
 
 /** Require a CBOR item to have an unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
  *
  * @param alloc The allocator to use.
- * @param chunk The chunk to read from.
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return Pointer to the boolean value, if the item was an integer.
- * The value can be deleted with bp_cbor_require_delete().
+ * The value can be deleted with wscbor_require_delete().
  */
-guint64 * cbor_require_uint64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
+guint64 * wscbor_require_uint64(wmem_allocator_t *alloc, wscbor_chunk_t *chunk);
 
 /** Require a CBOR item to have an signed- or unsigned-integer value.
  * @note This reader will clip the most significant bit of the value.
  *
  * @param alloc The allocator to use.
- * @param chunk The chunk to read from.
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return Pointer to the value, if the item was an integer.
- * The value can be deleted with bp_cbor_require_delete().
+ * The value can be deleted with wscbor_require_delete().
  */
-gint64 * cbor_require_int64(wmem_allocator_t *alloc, bp_cbor_chunk_t *chunk);
+gint64 * wscbor_require_int64(wmem_allocator_t *alloc, wscbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a text-string value.
  *
  * @param alloc The allocator to use.
  * @param parent The containing buffer.
- * @param chunk The chunk to read size from.
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return Pointer to the null-terminated UTF-8, if the item was a tstr.
  */
-char * cbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, bp_cbor_chunk_t *chunk);
+char * wscbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, wscbor_chunk_t *chunk);
 
 /** Require a CBOR item to have a byte-string value.
  *
  * @param parent The containing buffer.
- * @param chunk The chunk to read size from.
+ * @param[in,out] chunk The chunk to read from and write errors on.
  * @return Pointer to the value, if the item was an string.
  * The value is memory managed by wireshark.
  */
-tvbuff_t * cbor_require_bstr(tvbuff_t *parent, bp_cbor_chunk_t *chunk);
+tvbuff_t * wscbor_require_bstr(tvbuff_t *parent, wscbor_chunk_t *chunk);
 
 /** Add an item representing an array or map container.
  * If the item is type FT_UINT* or FT_INT* the count of (array) items
  * or map (pairs) is used as the iterm value.
  */
-proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk);
 
 /** Add an item representing a non-boolean, non-float control value.
- *
  */
-proto_item * proto_tree_add_cbor_ctrl(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+proto_item * proto_tree_add_cbor_ctrl(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk);
 
-proto_item * proto_tree_add_cbor_boolean(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gboolean *value);
+proto_item * proto_tree_add_cbor_boolean(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk, const gboolean *value);
 
-proto_item * proto_tree_add_cbor_uint64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value);
+proto_item * proto_tree_add_cbor_uint64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk, const guint64 *value);
 
-proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const gint64 *value);
+proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk, const gint64 *value);
 
-proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk, const guint64 *value);
+proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk, const guint64 *value);
 
-proto_item * proto_tree_add_cbor_tstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+proto_item * proto_tree_add_cbor_tstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk);
 
-proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const bp_cbor_chunk_t *chunk);
+proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* WIRESHARK_PLUGIN_SRC_BP_CBOR_H_ */
+#endif /* __WSCBOR_H__ */

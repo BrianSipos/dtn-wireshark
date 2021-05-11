@@ -1,5 +1,5 @@
 
-#include "bp_cbor.h"
+#include "epan/wscbor.h"
 #include <inttypes.h>
 #include <glib.h>
 #include <epan/value_string.h>
@@ -71,32 +71,36 @@ TEST_F(TestBpCbor, testTvbStoreHex) {
 
 TEST_F(TestBpCbor, testDecodeHead0) {
     auto store = TvbStore::fromHex("05");
-    auto head = bp_cbor_head_read(_alloc, store.tvb, 0);
-    ASSERT_NE(nullptr, head);
-    EXPECT_EQ(0, head->start);
-    EXPECT_EQ(1, head->length);
-    EXPECT_EQ(nullptr, head->error);
-    EXPECT_EQ(0, head->type_major);
-    EXPECT_EQ(5, head->type_minor);
-    EXPECT_EQ(5, head->rawvalue);
+    gint offset = 0;
+    auto chunk = wscbor_chunk_read(_alloc, store.tvb, &offset);
+    ASSERT_NE(nullptr, chunk);
+    EXPECT_EQ(0, chunk->start);
+    EXPECT_EQ(1, chunk->head_length);
+    EXPECT_EQ(1, chunk->data_length);
+    EXPECT_EQ(0, wscbor_has_errors(chunk));
+    EXPECT_EQ(0, chunk->type_major);
+    EXPECT_EQ(5, chunk->type_minor);
+    EXPECT_EQ(5, chunk->head_value);
 }
 
 TEST_F(TestBpCbor, testDecodeHead4) {
     auto store = TvbStore::fromHex("1A000186A0");
-    auto head = bp_cbor_head_read(_alloc, store.tvb, 0);
-    ASSERT_NE(nullptr, head);
-    EXPECT_EQ(0, head->start);
-    EXPECT_EQ(5, head->length);
-    EXPECT_EQ(nullptr, head->error);
-    EXPECT_EQ(0, head->type_major);
-    EXPECT_EQ(26, head->type_minor);
-    EXPECT_EQ(100000, head->rawvalue);
+    gint offset = 0;
+    auto chunk = wscbor_chunk_read(_alloc, store.tvb, &offset);
+    ASSERT_NE(nullptr, chunk);
+    EXPECT_EQ(0, chunk->start);
+    EXPECT_EQ(5, chunk->head_length);
+    EXPECT_EQ(5, chunk->data_length);
+    EXPECT_EQ(0, wscbor_has_errors(chunk));
+    EXPECT_EQ(0, chunk->type_major);
+    EXPECT_EQ(26, chunk->type_minor);
+    EXPECT_EQ(100000, chunk->head_value);
 }
 
 TEST_F(TestBpCbor, testSkipItem) {
     auto store = TvbStore::fromHex("82626869190D4801");
     gint offset = 0;
-    auto indef = bp_cbor_skip_next_item(_alloc, store.tvb, &offset);
+    auto indef = wscbor_skip_next_item(_alloc, store.tvb, &offset);
     EXPECT_EQ(FALSE, indef);
     EXPECT_EQ(7, offset);
 }
@@ -104,16 +108,16 @@ TEST_F(TestBpCbor, testSkipItem) {
 TEST_F(TestBpCbor, testRequirePositive) {
     auto store = TvbStore::fromHex("1A000186A0");
     gint offset = 0;
-    auto chunk = bp_cbor_chunk_read(_alloc, store.tvb, &offset);
+    auto chunk = wscbor_chunk_read(_alloc, store.tvb, &offset);
     ASSERT_NE(nullptr, chunk);
     EXPECT_EQ(5, offset);
     {
-        auto value = cbor_require_uint64(_alloc, chunk);
+        auto value = wscbor_require_uint64(_alloc, chunk);
         ASSERT_NE(nullptr, value);
         EXPECT_EQ(100000, *value);
     }
     {
-        auto value = cbor_require_int64(_alloc, chunk);
+        auto value = wscbor_require_int64(_alloc, chunk);
         ASSERT_NE(nullptr, value);
         EXPECT_EQ(100000, *value);
     }
@@ -122,15 +126,15 @@ TEST_F(TestBpCbor, testRequirePositive) {
 TEST_F(TestBpCbor, testRequireNegative) {
     auto store = TvbStore::fromHex("3A0001869F");
     gint offset = 0;
-    auto chunk = bp_cbor_chunk_read(_alloc, store.tvb, &offset);
+    auto chunk = wscbor_chunk_read(_alloc, store.tvb, &offset);
     ASSERT_NE(nullptr, chunk);
     EXPECT_EQ(5, offset);
     {
-        auto value = cbor_require_uint64(_alloc, chunk);
+        auto value = wscbor_require_uint64(_alloc, chunk);
         ASSERT_EQ(nullptr, value);
     }
     {
-        auto value = cbor_require_int64(_alloc, chunk);
+        auto value = wscbor_require_int64(_alloc, chunk);
         ASSERT_NE(nullptr, value);
         EXPECT_EQ(-100000, *value);
     }

@@ -15,7 +15,7 @@ target_link_libraries(udpcl PRIVATE bpv7)
 add_library(
     bpv7 SHARED
     packet-bpv7.h packet-bpv7.c
-    bp_cbor.h bp_cbor.c
+    epan/wscbor.h epan/wscbor.c
 )
 target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
 
