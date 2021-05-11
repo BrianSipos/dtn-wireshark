@@ -1,9 +1,3 @@
-#include <epan/packet.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * COSE message dissectors are registered multiple ways:
  * 1. The unit-keyed dissector table "cose.msgtag" with keys being

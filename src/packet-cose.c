@@ -1,17 +1,12 @@
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
-#include <epan/conversation.h>
 #include <epan/expert.h>
-#include <epan/reassemble.h>
-#include <epan/tvbuff-int.h>
 #include <epan/exceptions.h>
-#include <epan/dissectors/packet-udp.h>
-#include <epan/dissectors/packet-dtls.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "packet-cose.h"
 #include "epan/wscbor.h"
+#include "packet-cose.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -19,12 +14,6 @@
 #include <config.h>
 #define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
 #define WIRESHARK_VERSION_MINOR VERSION_MINOR
-#endif
-
-#if defined(WIRESHARK_NEW_FLAGSPTR)
-#define WS_FIELDTYPE int *const
-#else
-#define WS_FIELDTYPE const int *
 #endif
 
 /// Glib logging "domain" name
@@ -751,8 +740,6 @@ static void proto_register_cose(void) {
 }
 
 static void proto_reg_handoff_cose(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_reg_handoff_cose()\n");
-
     table_media = find_dissector_table("media_type");
     handle_cbor = find_dissector("cbor");
 
