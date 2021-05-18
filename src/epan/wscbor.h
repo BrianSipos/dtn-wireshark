@@ -19,9 +19,8 @@ extern "C" {
 #endif
 
 /** Register expert info and other wireshark data.
- * @param expert The parent module object.
  */
-void wscbor_init(expert_module_t *expert);
+void wscbor_init(void);
 
 /// The same enumeration from libcbor-0.5
 typedef enum cbor_type {
@@ -61,6 +60,16 @@ typedef struct {
  */
 wscbor_error_t * wscbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...);
 
+/// Tag metadata and value
+typedef struct {
+    /// The start offset of this tag head
+    gint start;
+    /// The length of just this tag head
+    gint length;
+    /// The tag value
+    guint64 value;
+} wscbor_tag_t;
+
 /// A data-containing, optionally-tagged chunk of CBOR
 typedef struct {
     /// The allocator used for #errors and #tags
@@ -74,7 +83,7 @@ typedef struct {
     gint data_length;
     /// Errors processing this chunk (type wscbor_error_t*)
     wmem_list_t *errors;
-    /// Tags on this chunk, in encoded order (type guint64*)
+    /// Tags on this chunk, in encoded order (type wscbor_tag_t*)
     wmem_list_t *tags;
 
     /// Major type of this block.

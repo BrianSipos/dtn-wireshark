@@ -4,17 +4,20 @@
 #include <inttypes.h>
 #include "wscbor.h"
 
+/// Pseudo-protocol to register expert info
+static int proto_wscbor = -1;
+
 static expert_field ei_cbor_invalid = EI_INIT;
 static expert_field ei_cbor_overflow = EI_INIT;
-expert_field ei_cbor_wrong_type = EI_INIT;
-expert_field ei_cbor_array_wrong_size = EI_INIT;
-expert_field ei_item_missing = EI_INIT;
+static expert_field ei_cbor_wrong_type = EI_INIT;
+static expert_field ei_cbor_array_wrong_size = EI_INIT;
+static expert_field ei_item_missing = EI_INIT;
 static ei_register_info expertitems[] = {
-    {&ei_cbor_invalid, {"wscbor.cbor_invalid", PI_MALFORMED, PI_ERROR, "CBOR cannot be decoded", EXPFILL}},
-    {&ei_cbor_overflow, {"wscbor.cbor_overflow", PI_UNDECODED, PI_ERROR, "CBOR overflow of Wireshark value", EXPFILL}},
-    {&ei_cbor_wrong_type, {"wscbor.cbor_wrong_type", PI_MALFORMED, PI_ERROR, "CBOR is wrong type", EXPFILL}},
-    {&ei_cbor_array_wrong_size, {"wscbor.array_wrong_size", PI_MALFORMED, PI_WARN, "CBOR array is the wrong size", EXPFILL}},
-    {&ei_item_missing, {"wscbor.item_missing", PI_MALFORMED, PI_ERROR, "CBOR item is missing or incorrect type", EXPFILL}},
+    {&ei_cbor_invalid, {"_ws.wscbor.cbor_invalid", PI_MALFORMED, PI_ERROR, "CBOR cannot be decoded", EXPFILL}},
+    {&ei_cbor_overflow, {"_ws.wscbor.cbor_overflow", PI_UNDECODED, PI_ERROR, "CBOR overflow of Wireshark value", EXPFILL}},
+    {&ei_cbor_wrong_type, {"_ws.wscbor.cbor_wrong_type", PI_MALFORMED, PI_ERROR, "CBOR is wrong type", EXPFILL}},
+    {&ei_cbor_array_wrong_size, {"_ws.wscbor.array_wrong_size", PI_MALFORMED, PI_WARN, "CBOR array is the wrong size", EXPFILL}},
+    {&ei_item_missing, {"_ws.wscbor.item_missing", PI_MALFORMED, PI_ERROR, "CBOR item is missing or incorrect type", EXPFILL}},
 };
 
 /// The basic header structure of CBOR encoding
@@ -150,8 +153,10 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
             wmem_list_append(chunk->errors, wscbor_error_new(alloc, head->error, NULL));
         }
         if (head->type_major == CBOR_TYPE_TAG) {
-            guint64 *tag = wmem_new(alloc, guint64);
-            *tag = head->rawvalue;
+            wscbor_tag_t *tag = wmem_new(alloc, wscbor_tag_t);
+            tag->start = head->start;
+            tag->length = head->length;
+            tag->value = head->rawvalue;
             wmem_list_append(chunk->tags, tag);
             // same chunk, next part
             wscbor_head_free(alloc, head);
@@ -159,7 +164,7 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
         }
 
         // An actual (non-tag) header
-        chunk->type_major = head->type_major;
+        chunk->type_major = (cbor_type)head->type_major;
         chunk->type_minor = head->type_minor;
         chunk->head_value = head->rawvalue;
 
@@ -184,7 +189,7 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
 
     if (used_head == 0) {
         wmem_list_append(chunk->errors, wscbor_error_new(alloc, &ei_item_missing, NULL));
-        chunk->type_major = 0xFF;
+        chunk->type_major = (cbor_type)0xFF;
         chunk->type_minor = 0xFF;
         chunk->head_value = 0;
     }
@@ -193,7 +198,7 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
 }
 
 static void wscbor_subitem_free(gpointer data, gpointer userdata) {
-    wmem_allocator_t *alloc = userdata;
+    wmem_allocator_t *alloc = (wmem_allocator_t *) userdata;
     wmem_free(alloc, data);
 }
 
@@ -210,7 +215,7 @@ void wscbor_chunk_free(wscbor_chunk_t *chunk) {
 guint64 wscbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const wscbor_chunk_t *chunk) {
     for (wmem_list_frame_t *it = wmem_list_head(chunk->errors); it;
             it = wmem_list_frame_next(it)) {
-        wscbor_error_t *err = wmem_list_frame_data(it);
+        wscbor_error_t *err = (wscbor_error_t *) wmem_list_frame_data(it);
         if (err->msg) {
             expert_add_info_format(pinfo, item, err->ei, "%s", err->msg);
         }
@@ -291,8 +296,19 @@ gboolean wscbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *off
     return TRUE;
 }
 
-void wscbor_init(expert_module_t *expert) {
-    expert_register_field_array(expert, expertitems, array_length(expertitems));
+void wscbor_init(void) {
+    proto_wscbor = proto_register_protocol(
+        "CBOR Item Decoder",
+        "CBOR Item Decoder",
+        "_ws.wscbor"
+    );
+
+    expert_module_t *expert_wscbor = expert_register_protocol(proto_wscbor);
+    /* This isn't really a protocol, it's an error indication;
+       disabling them makes no sense. */
+    proto_set_cant_toggle(proto_wscbor);
+
+    expert_register_field_array(expert_wscbor, expertitems, array_length(expertitems));
 }
 
 gboolean wscbor_require_major_type(wscbor_chunk_t *chunk, cbor_type major) {
@@ -398,12 +414,31 @@ gint64 * wscbor_require_int64(wmem_allocator_t *alloc, wscbor_chunk_t *chunk) {
     return result;
 }
 
+/** Get a clamped string length suitable for tvb functions.
+ * @param[in,out] chunk The chunk to read and set errors on.
+ * @return The clamped length value.
+ */
+static gint wscbor_get_length(const wscbor_chunk_t *chunk) {
+    gint length;
+    if (chunk->head_value > G_MAXINT) {
+        wmem_list_append(chunk->errors, wscbor_error_new(
+                chunk->_alloc, &ei_cbor_overflow,
+                NULL
+        ));
+        length = G_MAXINT;
+    }
+    else {
+        length = (gint) chunk->head_value;
+    }
+    return length;
+}
+
 char * wscbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, wscbor_chunk_t *chunk) {
     if (!wscbor_require_major_type(chunk, CBOR_TYPE_STRING)) {
         return NULL;
     }
 
-    return (char *)tvb_get_string_enc(alloc, parent, chunk->start + chunk->head_length, chunk->head_value, ENC_UTF_8);
+    return (char *)tvb_get_string_enc(alloc, parent, chunk->start + chunk->head_length, wscbor_get_length(chunk), ENC_UTF_8);
 }
 
 tvbuff_t * wscbor_require_bstr(tvbuff_t *parent, wscbor_chunk_t *chunk) {
@@ -411,7 +446,7 @@ tvbuff_t * wscbor_require_bstr(tvbuff_t *parent, wscbor_chunk_t *chunk) {
         return NULL;
     }
 
-    return tvb_new_subset_length(parent, chunk->start + chunk->head_length, chunk->head_value);
+    return tvb_new_subset_length(parent, chunk->start + chunk->head_length, wscbor_get_length(chunk));
 }
 
 proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk) {
@@ -424,14 +459,14 @@ proto_item * proto_tree_add_cbor_container(proto_tree *tree, int hfindex, packet
         item = proto_tree_add_int64(tree, hfindex, tvb, chunk->start, chunk->head_length, chunk->head_value);
     }
     else {
-        item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, -1, ENC_NA);
+        item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, -1, 0);
     }
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
 proto_item * proto_tree_add_cbor_ctrl(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk) {
-    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, chunk->head_length, ENC_NA);
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start, chunk->head_length, 0);
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
@@ -456,7 +491,7 @@ proto_item * proto_tree_add_cbor_int64(proto_tree *tree, int hfindex, packet_inf
 
 proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gint ett, WS_FIELDTYPE *fields, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk, const guint64 *value) {
     header_field_info *field = proto_registrar_get_nth(hfindex);
-    size_t flagsize = 0;
+    gint flagsize = 0;
     switch (field->type) {
         case FT_UINT8:
             flagsize = 1;
@@ -476,7 +511,7 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
     }
 
     // Fake TVB data for these functions
-    guint8 *flags = wmem_alloc0(wmem_packet_scope(), flagsize);
+    guint8 *flags = (guint8 *) wmem_alloc0(wmem_packet_scope(), flagsize);
     { // Inject big-endian value directly
         guint64 buf = (value ? *value : 0);
         for (gint ix = flagsize - 1; ix >= 0; --ix) {
@@ -494,13 +529,13 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
 }
 
 proto_item * proto_tree_add_cbor_tstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk) {
-    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_NA);
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, wscbor_get_length(chunk), 0);
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
 
 proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info *pinfo, tvbuff_t *tvb, const wscbor_chunk_t *chunk) {
-    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, chunk->head_value, ENC_NA);
+    proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, wscbor_get_length(chunk), 0);
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }

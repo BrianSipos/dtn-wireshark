@@ -1859,6 +1859,8 @@ static const reassembly_table_functions bundle_reassembly_table_functions = {
 
 /// Overall registration of the protocol
 static void proto_register_bp(void) {
+    wscbor_init();
+
     proto_bp = proto_register_protocol(
         "DTN Bundle Protocol Version 7", /* name */
         "BPv7", /* short name */
@@ -1870,7 +1872,6 @@ static void proto_register_bp(void) {
     proto_register_field_array(proto_bp, fields, array_length(fields));
     proto_register_subtree_array(ett, array_length(ett));
     expert_module_t *expert = expert_register_protocol(proto_bp);
-    wscbor_init(expert);
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
     register_dissector("bpv7", dissect_bp, proto_bp);
