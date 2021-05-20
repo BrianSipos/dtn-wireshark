@@ -1,3 +1,5 @@
+#include "packet-cose.h"
+#include "epan/wscbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
@@ -5,8 +7,6 @@
 #include <epan/exceptions.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "epan/wscbor.h"
-#include "packet-cose.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>

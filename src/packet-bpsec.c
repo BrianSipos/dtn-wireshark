@@ -11,14 +11,6 @@
 #include <inttypes.h>
 #include "epan/wscbor.h"
 
-#if defined(WIRESHARK_HAS_VERSION_H)
-#include <ws_version.h>
-#else
-#include <config.h>
-#define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
-#define WIRESHARK_VERSION_MINOR VERSION_MINOR
-#endif
-
 /// Glib logging "domain" name
 //static const char *LOG_DOMAIN = "bpsec";
 
@@ -352,7 +344,7 @@ static void reinit_bpsec(void) {
 }
 
 /// Overall registration of the protocol
-static void proto_register_bpsec(void) {
+void proto_register_bpsec(void) {
     proto_bpsec = proto_register_protocol(
         "DTN Bundle Protocol Security", /* name */
         "BPSec", /* short name */
@@ -370,7 +362,7 @@ static void proto_register_bpsec(void) {
     prefs_register_protocol(proto_bpsec, reinit_bpsec);
 }
 
-static void proto_reg_handoff_bpsec(void) {
+void proto_reg_handoff_bpsec(void) {
     handle_cbor = find_dissector("cbor");
 
     /* Packaged extensions */
@@ -384,22 +376,4 @@ static void proto_reg_handoff_bpsec(void) {
     }
 
     reinit_bpsec();
-}
-
-#define PP_STRINGIZE_I(text) #text
-
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const char plugin_version[] = "0.0";
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const char plugin_release[] = PP_STRINGIZE_I(WIRESHARK_VERSION_MAJOR) "." PP_STRINGIZE_I(WIRESHARK_VERSION_MINOR);
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const int plugin_want_major = WIRESHARK_VERSION_MAJOR;
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const int plugin_want_minor = WIRESHARK_VERSION_MINOR;
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF void plugin_register(void) {
-    static proto_plugin plugin_bp;
-    plugin_bp.register_protoinfo = proto_register_bpsec;
-    plugin_bp.register_handoff = proto_reg_handoff_bpsec;
-    proto_register_plugin(&plugin_bp);
 }

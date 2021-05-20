@@ -1,8 +1,16 @@
+#include "wscbor.h"
 #include <epan/packet.h>
 #include <epan/expert.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "wscbor.h"
+
+#if defined(WIRESHARK_HAS_VERSION_H)
+#include <ws_version.h>
+#else
+#include <config.h>
+#define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
+#define WIRESHARK_VERSION_MINOR VERSION_MINOR
+#endif
 
 /// Pseudo-protocol to register expert info
 static int proto_wscbor = -1;
@@ -299,7 +307,7 @@ gboolean wscbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *off
 void wscbor_init(void) {
     proto_wscbor = proto_register_protocol(
         "CBOR Item Decoder",
-        "CBOR Item Decoder",
+        "wscbor",
         "_ws.wscbor"
     );
 
@@ -538,4 +546,25 @@ proto_item * proto_tree_add_cbor_bstr(proto_tree *tree, int hfindex, packet_info
     proto_item *item = proto_tree_add_item(tree, hfindex, tvb, chunk->start + chunk->head_length, wscbor_get_length(chunk), 0);
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
+}
+
+
+#define PP_STRINGIZE_I(text) #text
+
+/// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF const char plugin_version[] = "0.0";
+/// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF const char plugin_release[] = PP_STRINGIZE_I(WIRESHARK_VERSION_MAJOR) "." PP_STRINGIZE_I(WIRESHARK_VERSION_MINOR);
+/// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF const int plugin_want_major = WIRESHARK_VERSION_MAJOR;
+/// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF const int plugin_want_minor = WIRESHARK_VERSION_MINOR;
+/// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF void plugin_register(void) {
+#if 0
+    static proto_plugin plugin_bp;
+    plugin_bp.register_protoinfo = wscbor_init;
+    plugin_bp.register_handoff = NULL;
+    proto_register_plugin(&plugin_bp);
+#endif
 }

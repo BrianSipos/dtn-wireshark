@@ -1,21 +1,13 @@
 #include "packet-bpsec.h"
 #include "packet-bpv7.h"
 #include "packet-cose.h"
+#include "epan/wscbor.h"
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
 #include <epan/expert.h>
 #include <epan/to_str.h>
 #include <inttypes.h>
-#include "epan/wscbor.h"
-
-#if defined(WIRESHARK_HAS_VERSION_H)
-#include <ws_version.h>
-#else
-#include <config.h>
-#define WIRESHARK_VERSION_MAJOR VERSION_MAJOR
-#define WIRESHARK_VERSION_MINOR VERSION_MINOR
-#endif
 
 /** AAD Scope parameter.
  * Section 3.2.2.
@@ -118,7 +110,7 @@ static int dissect_addl_unprotected(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 /** Dissector for bstr-wrapped CBOR.
  */
 static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data) {
-    const gint64 *typeid = data;
+    gint64 *typeid = data;
     DISSECTOR_ASSERT(typeid != NULL);
     gint offset = 0;
 
@@ -129,13 +121,11 @@ static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
 
     if (tvb_data) {
-        dissector_try_uint(
-            table_cose_msg,
-            (guint32)(*typeid), // result ID is message tag
-            tvb_data,
-            pinfo,
-            tree_msg
-        );
+        dissector_handle_t dissector = dissector_get_custom_table_handle(table_cose_msg, typeid);
+        int sublen = call_dissector(dissector, tvb_data, pinfo, tree_msg);
+        if (sublen < 0) {
+            return sublen;
+        }
     }
 
     return offset;
@@ -146,7 +136,7 @@ static void reinit_bpsec_cose(void) {
 }
 
 /// Overall registration of the protocol
-static void proto_register_bpsec_cose(void) {
+void proto_register_bpsec_cose(void) {
     proto_bpsec_cose = proto_register_protocol(
         "BPSec COSE", /* name */
         "BPSec COSE", /* short name */
@@ -159,25 +149,22 @@ static void proto_register_bpsec_cose(void) {
     prefs_register_protocol(proto_bpsec_cose, reinit_bpsec_cose);
 }
 
-static void proto_reg_handoff_bpsec_cose(void) {
+void proto_reg_handoff_bpsec_cose(void) {
     table_cose_msg = find_dissector_table("cose.msgtag");
     handle_cose_msg_hdr = find_dissector_add_dependency("cose.msg.headers", proto_bpsec_cose);
 
     /* Packaged extensions */
     const gint64 ctxid = 99;
-#if 0
     {
-        dissector_handle_t hdl = create_dissector_handle(dissect_cose_key, proto_bpsec_cose);
-        {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 1);
-            dissector_add_custom_table_handle("bpsec.param", key, hdl);
-        }
-        {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 2);
-            dissector_add_custom_table_handle("bpsec.param", key, hdl);
-        }
+        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 1);
+        dissector_handle_t hdl = find_dissector_add_dependency("cose_key", proto_bpsec_cose);
+        dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
-#endif
+    {
+        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 2);
+        dissector_handle_t hdl = find_dissector_add_dependency("cose_key_set", proto_bpsec_cose);
+        dissector_add_custom_table_handle("bpsec.param", key, hdl);
+    }
     {
         bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 3);
         dissector_handle_t hdl = create_dissector_handle(dissect_addl_protected, proto_bpsec_cose);
@@ -204,22 +191,4 @@ static void proto_reg_handoff_bpsec_cose(void) {
     }
 
     reinit_bpsec_cose();
-}
-
-#define PP_STRINGIZE_I(text) #text
-
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const char plugin_version[] = "0.0";
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const char plugin_release[] = PP_STRINGIZE_I(WIRESHARK_VERSION_MAJOR) "." PP_STRINGIZE_I(WIRESHARK_VERSION_MINOR);
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const int plugin_want_major = WIRESHARK_VERSION_MAJOR;
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF const int plugin_want_minor = WIRESHARK_VERSION_MINOR;
-/// Interface for wireshark plugin
-WS_DLL_PUBLIC_DEF void plugin_register(void) {
-    static proto_plugin plugin;
-    plugin.register_protoinfo = proto_register_bpsec_cose;
-    plugin.register_handoff = proto_reg_handoff_bpsec_cose;
-    proto_register_plugin(&plugin);
 }
