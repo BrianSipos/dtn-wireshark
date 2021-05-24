@@ -4,12 +4,12 @@
 #include <epan/conversation.h>
 #include <epan/expert.h>
 #include <epan/reassemble.h>
-#include <epan/tvbuff-int.h>
 #include <epan/dissectors/packet-udp.h>
 #include <epan/dissectors/packet-dtls.h>
+#include <epan/exceptions.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "bp_cbor.h"
+#include "epan/wscbor.h"
 #include "packet-udpcl.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
@@ -39,7 +39,7 @@
 /// Glib logging "domain" name
 static const char *LOG_DOMAIN = "udpcl";
 /// Protocol column name
-const char *const proto_name_udpcl = "UDPCL";
+static const char *const proto_name_udpcl = "UDPCL";
 
 /// Protocol preferences and defaults
 static const guint UDPCL_PORT_NUM = 4556;
@@ -49,16 +49,16 @@ static gboolean udpcl_decode_bundle = TRUE;
 /// Protocol handles
 static int proto_udpcl = -1;
 
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Dissector handles
 static dissector_handle_t handle_udpcl = NULL;
 static dissector_handle_t handle_dtls = NULL;
 static dissector_handle_t handle_bpv6 = NULL;
 static dissector_handle_t handle_bpv7 = NULL;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
 /// Dissect extension items
-static dissector_table_t dissect_ext = NULL;
+static dissector_table_t table_ext = NULL;
 
 /// Fragment reassembly
 static reassembly_table udpcl_reassembly_table;
@@ -113,7 +113,7 @@ static hf_register_info fields[] = {
     {&hf_rtn_interval, {"Interval", "udpcl.ext.rtn.interval", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
 
     {&hf_ext_nodeid, {"Sender Node ID", "udpcl.ext.nodeid", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_ext_starttls, {"Initiate DTLS", "udpcl.ext.starttls", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
@@ -216,8 +216,11 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
     proto_item *item_udpcl = proto_tree_get_parent(tree_udpcl);
     proto_item *tree = proto_tree_get_root(tree_udpcl);
 
+    // Peek at first octet
     const guint8 first_octet = tvb_get_guint8(tvb, 0);
-    bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, 0);
+    wscbor_chunk_t *first_head = wscbor_chunk_read(wmem_packet_scope(), tvb, &sublen);
+    sublen = 0;
+
     if (first_octet == 0x06) {
         col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Bundle v6");
         proto_item_append_text(item_udpcl, ", Bundle v6");
@@ -246,16 +249,11 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
             }
         }
         if (sublen == 0) {
-            if (dissect_media) {
-                sublen = dissector_try_string(
-                    dissect_media,
-                    "application/cbor",
-                    tvb,
-                    pinfo,
-                    tree,
-                    NULL
-                );
+            TRY {
+                sublen = call_dissector(handle_cbor, tvb, pinfo, tree);
             }
+            CATCH_ALL {}
+            ENDTRY;
         }
     }
     else {
@@ -263,7 +261,6 @@ static int dissect_bundle(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
         proto_item_append_text(item_udpcl, ", Non-bundle data");
         expert_add_info(pinfo, item_udpcl, &ei_non_bundle_data);
     }
-    bp_cbor_chunk_delete(first_head);
     return sublen;
 }
 
@@ -275,35 +272,28 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_item *item_xfer = proto_tree_add_item(tree_ext_item, hf_ext_xfer, tvb, offset, -1, ENC_NA);
     proto_tree *tree_xfer = proto_item_add_subtree(item_xfer, ett_ext_xfer);
 
-    bp_cbor_chunk_t *chunk_xfer = cbor_require_array_with_size(tvb, pinfo, item_xfer, &offset, 4, 4);
-    if (!chunk_xfer) {
+    wscbor_chunk_t *chunk_xfer = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_array_size(chunk_xfer, 4, 4);
+    if (wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_xfer)) {
         proto_item_set_len(item_xfer, offset);
         return offset;
     }
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_id = cbor_require_uint64(chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_id = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_id, pinfo, tvb, chunk, xfer_id);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_tot_len = cbor_require_uint64(chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_tot_len = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *xfer_frag_offset = cbor_require_uint64(chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *xfer_frag_offset = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
-    bp_cbor_chunk_delete(chunk);
 
-    chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    tvbuff_t *xfer_fragment = cbor_require_string(tvb, chunk);
-    proto_tree_add_cbor_string(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
-    bp_cbor_chunk_delete(chunk);
+    chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *xfer_fragment = wscbor_require_bstr(tvb, chunk);
+    proto_tree_add_cbor_bstr(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
 
     if (udpcl_desegment_transfer
         && xfer_id && xfer_tot_len && xfer_frag_offset && xfer_fragment) {
@@ -384,11 +374,9 @@ static int dissect_return_accept(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item *item_rtn = proto_tree_add_item(tree_ext_item, hf_ext_rtn, tvb, offset, -1, ENC_NA);
     proto_tree *tree_rtn = proto_item_add_subtree(item_rtn, ett_ext_rtn);
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    guint64 *interval = cbor_require_uint64(chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    guint64 *interval = wscbor_require_uint64(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_uint64(tree_rtn, hf_rtn_interval, pinfo, tvb, chunk, interval);
-    bp_cbor_chunk_delete(chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
     proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);
@@ -405,10 +393,9 @@ static int dissect_nodeid(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ex
     proto_item *item_nodeid = proto_tree_add_item(tree_ext_item, hf_ext_nodeid, tvb, offset, -1, ENC_NA);
     proto_tree *tree_nodeid = proto_item_add_subtree(item_nodeid, ett_ext_nodeid);
 
-    bp_cbor_chunk_t *chunk = bp_scan_cbor_chunk(tvb, offset);
-    offset += chunk->data_length;
-    proto_tree_add_cbor_string(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
-    bp_cbor_chunk_delete(chunk);
+    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_require_major_type(chunk, CBOR_TYPE_STRING);
+    proto_tree_add_cbor_tstr(tree_nodeid, hf_nodeid_str, pinfo, tvb, chunk);
 
     proto_tree *tree_ext_map = proto_tree_get_parent_tree(tree_ext_item);
     proto_tree *tree_udpcl = proto_tree_get_parent_tree(tree_ext_map);
@@ -423,7 +410,7 @@ static int dissect_starttls(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     gint offset = 0;
     col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Initiate DTLS");
 
-    cbor_skip_next_item(tvb, &offset);
+    wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
     // no real value
     proto_tree_add_item(tree_ext_item, hf_ext_starttls, tvb, 0, offset, ENC_NA);
 
@@ -447,9 +434,10 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
     proto_tree *tree_udpcl = proto_item_add_subtree(item_udpcl, ett_udpcl);
 
     while ((guint)offset < buflen) {
-        // Initial octet snooping
+        // Peek at first octet
         const guint8 first_octet = tvb_get_guint8(tvb, offset);
-        bp_cbor_chunk_t *first_head = bp_scan_cbor_chunk(tvb, offset);
+        wscbor_chunk_t *first_head = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+        offset -= first_head->data_length;
 
         if (first_octet == 0x00) {
             col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Padding");
@@ -480,33 +468,23 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             proto_tree *tree_ext_map = proto_item_add_subtree(item_ext_map, ett_ext_map);
 
             for (gint64 ix = 0; ix < count; ++ix) {
-                bp_cbor_chunk_t *key_chunk = bp_scan_cbor_chunk(tvb, offset);
-                offset += key_chunk->data_length;
-                gint64 *key = cbor_require_int64(key_chunk);
+                wscbor_chunk_t *key_chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                gint64 *key = wscbor_require_int64(wmem_packet_scope(), key_chunk);
                 proto_item *item_ext_item = proto_tree_add_cbor_int64(tree_ext_map, hf_ext_id, pinfo, tvb, key_chunk, key);
                 proto_tree *tree_ext_item = proto_item_add_subtree(item_ext_item, ett_ext_item);
-                bp_cbor_chunk_delete(key_chunk);
 
+                // Skip the item to detect its length for subset TVB
                 const guint init_offset = offset;
-                cbor_skip_next_item(tvb, &offset);
+                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
                 if (!key) {
                     continue;
                 }
                 tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset - init_offset);
-                int sublen = dissector_try_uint(dissect_ext, *key, tvb_item, pinfo, tree_ext_item);
+                int sublen = dissector_try_uint(table_ext, *key, tvb_item, pinfo, tree_ext_item);
                 if (sublen == 0) {
                     expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
-                    dissector_try_string(
-                        dissect_media,
-                        "application/cbor",
-                        tvb_item,
-                        pinfo,
-                        tree_ext_item,
-                        NULL
-                    );
+                    sublen = call_dissector(handle_cbor, tvb_item, pinfo, tree_ext_item);
                 }
-
-                bp_cbor_require_delete(key);
             }
             proto_item_set_len(item_ext_map, offset);
 
@@ -517,7 +495,6 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             offset += dissect_bundle(tvb, pinfo, tree_udpcl);
             proto_item_set_len(item_udpcl, 0);
         }
-        bp_cbor_chunk_delete(first_head);
     }
 
     return offset;
@@ -537,7 +514,6 @@ static void udpcl_reinit(void) {
 
 /// Overall registration of the protocol
 static void proto_register_udpcl(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_register_udpcl()\n");
     proto_udpcl = proto_register_protocol(
         "DTN UDP Convergence Layer", /* name */
         "UDPCL", /* short name */
@@ -552,7 +528,7 @@ static void proto_register_udpcl(void) {
     expert_register_field_array(expert, expertitems, array_length(expertitems));
 
     handle_udpcl = register_dissector("udpcl", dissect_udpcl, proto_udpcl);
-    dissect_ext = register_dissector_table("udpcl.ext", "UDPCL Extension", proto_udpcl, FT_UINT16, BASE_DEC);
+    table_ext = register_dissector_table("udpcl.ext", "UDPCL Extension", proto_udpcl, FT_UINT16, BASE_DEC);
 
     module_t *module_udpcl = prefs_register_protocol(proto_udpcl, udpcl_reinit);
     prefs_register_bool_preference(
@@ -579,10 +555,9 @@ static void proto_register_udpcl(void) {
 }
 
 static void proto_reg_handoff_udpcl(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_reg_handoff_udpcl()\n");
     dissector_add_uint_with_preference("udp.port", UDPCL_PORT_NUM, handle_udpcl);
 
-    dissect_media = find_dissector_table("media_type");
+    handle_cbor = find_dissector("cbor");
     handle_dtls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_udpcl);
     handle_bpv6 = find_dissector_add_dependency("bundle", proto_udpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_udpcl);

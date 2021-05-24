@@ -37,7 +37,7 @@
 /// Glib logging "domain" name
 static const char *LOG_DOMAIN = "tcpclv4";
 /// Protocol column name
-const char *const proto_name_tcpcl = "TCPCLv4";
+static const char *const proto_name_tcpcl = "TCPCLv4";
 
 /// Protocol preferences and defaults
 static const guint TCPCL_PORT_NUM = 4556;
@@ -48,13 +48,13 @@ static gboolean tcpcl_decode_bundle = TRUE;
 /// Protocol handles
 static int proto_tcpcl = -1;
 
+/// Dissect opaque CBOR data
+static dissector_handle_t handle_cbor = NULL;
 /// Dissector handles
 static dissector_handle_t handle_tcpcl = NULL;
 static dissector_handle_t handle_tls = NULL;
 static dissector_handle_t handle_bpv7 = NULL;
 
-/// Dissect opaque CBOR parameters/results
-static dissector_table_t dissect_media = NULL;
 /// Extension sub-dissectors
 static dissector_table_t sess_ext_dissectors = NULL;
 static dissector_table_t xfer_ext_dissectors = NULL;
@@ -1521,23 +1521,8 @@ static gint dissect_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
             }
         }
         if (sublen == 0) {
-            if (dissect_media) {
-                sublen = dissector_try_string(
-                    dissect_media,
-                    "application/cbor",
-                    xferload_tvb,
-                    pinfo,
-                    proto_tree_get_parent_tree(tree),
-                    data
-                );
-            }
-        }
-        if (sublen == 0) {
-            call_data_dissector(
-                xferload_tvb,
-                pinfo,
-                proto_tree_get_parent_tree(tree)
-            );
+            proto_tree *parent_tree = proto_tree_get_parent_tree(tree);
+            sublen = call_dissector(handle_cbor, xferload_tvb, pinfo, parent_tree);
         }
     }
 
@@ -1684,11 +1669,9 @@ static void proto_register_tcpcl(void) {
 }
 
 static void proto_reg_handoff_tcpcl(void) {
-    g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_reg_handoff_tcpcl()\n");
     dissector_add_uint_with_preference("tcp.port", TCPCL_PORT_NUM, handle_tcpcl);
 
-    dissect_media = find_dissector_table("media_type");
-
+    handle_cbor = find_dissector("cbor");
     handle_tls = find_dissector_add_dependency(TLS_DISSECTOR_NAME, proto_tcpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_tcpcl);
 

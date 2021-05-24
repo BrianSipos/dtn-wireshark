@@ -1,48 +1,44 @@
 
 add_library(
-    tcpclv4 SHARED
+    wscbor SHARED
+    epan/wscbor.h epan/wscbor.c
+)
+target_link_libraries(wscbor PUBLIC PkgConfig::WIRESHARK)
+
+add_library(
+    wscose MODULE
+    packet-cose.h packet-cose.c
+)
+target_link_libraries(wscose PUBLIC PkgConfig::WIRESHARK)
+target_link_libraries(wscose PRIVATE wscbor)
+
+add_library(
+    tcpclv4 MODULE
     packet-tcpclv4.h packet-tcpclv4.c
 )
 target_link_libraries(tcpclv4 PUBLIC PkgConfig::WIRESHARK)
 
 add_library(
-    udpcl SHARED
-    packet-udpcl.c
+    udpcl MODULE
+    packet-udpcl.h packet-udpcl.c
 )
 target_link_libraries(udpcl PUBLIC PkgConfig::WIRESHARK)
-target_link_libraries(udpcl PRIVATE bpv7)
+target_link_libraries(udpcl PRIVATE wscbor)
 
 add_library(
-    bpv7 SHARED
+    bpv7 MODULE
+    plugin_bpv7.c
     packet-bpv7.h packet-bpv7.c
-    bp_cbor.h bp_cbor.c
-)
-target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
-
-add_library(
-    bpv7_acme SHARED
-    packet-bpv7-acme.c
-)
-target_link_libraries(bpv7_acme PUBLIC PkgConfig::WIRESHARK)
-target_link_libraries(bpv7_acme PRIVATE bpv7)
-
-add_library(
-    bpsec SHARED
     packet-bpsec.h packet-bpsec.c
-)
-target_link_libraries(bpsec PUBLIC PkgConfig::WIRESHARK)
-target_link_libraries(bpsec PRIVATE bpv7)
-
-add_library(
-    bpsec_cose SHARED
+    packet-bpv7-acme.c
     packet-bpsec-cose.c
 )
-target_link_libraries(bpsec_cose PUBLIC PkgConfig::WIRESHARK)
-target_link_libraries(bpsec_cose PRIVATE bpsec)
+target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
+target_link_libraries(bpv7 PRIVATE wscbor)
 
 if(INSTALL_MODULE_PATH)
     install(
-        TARGETS tcpclv4 udpcl bpv7 bpv7_acme bpsec bpsec_cose
+        TARGETS wscbor wscose tcpclv4 udpcl bpv7
         LIBRARY DESTINATION ${INSTALL_MODULE_PATH}
     )
 endif(INSTALL_MODULE_PATH)
