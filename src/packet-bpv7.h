@@ -148,10 +148,10 @@ gboolean bp_eid_equal(gconstpointer a, gconstpointer b);
 
 /// Security marking metadata
 typedef struct {
-    /// Mark the data as security integrity protected
-    gboolean data_i;
-    /// Mark the data as security-modified and not decodable
-    gboolean data_c;
+    /// Block numbers marking the data as security integrity protected
+    wmem_map_t *data_i;
+    /// Block numbers marking the data as security-modified and not decodable
+    wmem_map_t *data_c;
 } security_mark_t;
 
 /// Metadata extracted from the primary block

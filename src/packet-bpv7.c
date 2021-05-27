@@ -509,6 +509,8 @@ bp_block_primary_t * bp_block_primary_new(wmem_allocator_t *alloc) {
     obj->rep_nodeid = bp_eid_new(alloc);
     obj->frag_offset = NULL;
     obj->total_len = NULL;
+    obj->sec.data_i = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
+    obj->sec.data_c = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
     return obj;
 }
 
@@ -521,17 +523,22 @@ void bp_block_primary_free(wmem_allocator_t *alloc, bp_block_primary_t *obj) {
     bp_eid_free(alloc, obj->rep_nodeid);
     wmem_free(alloc, obj->frag_offset);
     wmem_free(alloc, obj->total_len);
+    wmem_free(alloc, obj->sec.data_i);
+    wmem_free(alloc, obj->sec.data_c);
     wmem_free(alloc, obj);
 }
 
 bp_block_canonical_t * bp_block_canonical_new(wmem_allocator_t *alloc, guint64 index) {
     bp_block_canonical_t *obj = wmem_new0(alloc, bp_block_canonical_t);
     obj->index = index;
+    obj->sec.data_i = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
+    obj->sec.data_c = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
     return obj;
 }
 
 void bp_block_canonical_free(wmem_allocator_t *alloc, bp_block_canonical_t *obj) {
-    // no sub-deletions
+    wmem_free(alloc, obj->sec.data_i);
+    wmem_free(alloc, obj->sec.data_c);
     wmem_free(alloc, obj);
 }
 
@@ -1178,13 +1185,37 @@ static gint dissect_block_canonical(tvbuff_t *tvb, packet_info *pinfo, proto_tre
     return offset - start;
 }
 
+typedef struct {
+    packet_info *pinfo;
+    proto_item *pi;
+    expert_field *eiindex;
+    const char *sectype;
+} bpsec_block_mark_t;
 /// Mark blocks with BPSec expert info
+static void mark_target_block(gpointer key, gpointer value _U_, gpointer user_data) {
+    const guint64 *blk_num = (guint64 *)key;
+    const bpsec_block_mark_t *mark = (bpsec_block_mark_t *)user_data;
+    expert_add_info_format(
+        mark->pinfo, mark->pi, mark->eiindex,
+        "Block is targed by %s block number %" PRIu64, mark->sectype, *blk_num
+    );
+}
 static void apply_bpsec_mark(const security_mark_t *sec, packet_info *pinfo, proto_item *pi) {
-    if (sec->data_i) {
-        expert_add_info(pinfo, pi, &ei_block_sec_bib_tgt);
+    {
+        bpsec_block_mark_t mark;
+        mark.pinfo = pinfo;
+        mark.pi = pi;
+        mark.eiindex = &ei_block_sec_bib_tgt;
+        mark.sectype = "BIB";
+        wmem_map_foreach(sec->data_i, mark_target_block, &mark);
     }
-    if (sec->data_c) {
-        expert_add_info(pinfo, pi, &ei_block_sec_bcb_tgt);
+    {
+        bpsec_block_mark_t mark;
+        mark.pinfo = pinfo;
+        mark.pi = pi;
+        mark.eiindex = &ei_block_sec_bcb_tgt;
+        mark.sectype = "BCB";
+        wmem_map_foreach(sec->data_c, mark_target_block, &mark);
     }
 }
 

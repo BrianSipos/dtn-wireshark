@@ -178,12 +178,20 @@ static int dissect_block_asb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree
             wmem_array_append(targets, tgt_blknum, 1);
 
             if (*tgt_blknum == 0) {
-                data->bundle->primary->sec.data_i = TRUE;
+                wmem_map_insert(
+                    data->bundle->primary->sec.data_i,
+                    data->block->block_number,
+                    NULL
+                );
             }
             else {
                 bp_block_canonical_t *found = wmem_map_lookup(data->bundle->block_nums, tgt_blknum);
                 if (found) {
-                    found->sec.data_i = TRUE;
+                    wmem_map_insert(
+                        found->sec.data_i,
+                        data->block->block_number,
+                        NULL
+                    );
                 }
                 else {
                     expert_add_info(pinfo, item_tgt, &ei_target_invalid);
