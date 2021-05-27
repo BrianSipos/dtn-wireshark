@@ -1,4 +1,4 @@
-# DTN BPv7/TCPCLv4 Wireshark Dissectors
+# Wireshark Dissectors for BPv7-related Protocols
 
 These wireshark modules require development environment for wireshark itself, cmake, and some build tool.
 The reference commands below use the Ninja build tool, but that is not required.
