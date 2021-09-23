@@ -7,6 +7,7 @@
 #include <epan/reassemble.h>
 #include <epan/tvbuff-int.h>
 #include <epan/dissectors/packet-tcp.h>
+#include <epan/dissectors/packet-ber.h>
 #include <stdio.h>
 #include <inttypes.h>
 
@@ -186,6 +187,8 @@ static gint ett_xferload_fragments = -1;
 
 static int hf_xferext_transferlen_total_len = -1;
 
+static int hf_othername_eid = -1;
+
 /// Field definitions
 static hf_register_info fields[] = {
     {&hf_chdr_tree, {"TCPCLv4 Contact Header", "tcpclv4.chdr", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -296,6 +299,8 @@ static hf_register_info fields[] = {
 
     // Specific extensions
     {&hf_xferext_transferlen_total_len, {"Total Length", "tcpclv4.xferext.transfer_length.total_len", FT_UINT64, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
+
+    {&hf_othername_eid, {"bundleEID", "x509ce.bundleEID", FT_STRING, STR_ASCII, NULL, 0x0, NULL, HFILL}},
 };
 static WS_FIELDTYPE chdr_flags[] = {
     &hf_chdr_flags_cantls,
@@ -1603,6 +1608,17 @@ static int dissect_xferext_transferlen(tvbuff_t *tvb, packet_info *pinfo _U_, pr
     return tvb_captured_length(tvb);
 }
 
+static int dissect_othername_dtneid(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
+    int offset = 0;
+    asn1_ctx_t actx;
+    asn1_ctx_init(&actx, ASN1_ENC_BER, TRUE, pinfo);
+    offset += dissect_ber_restricted_string(
+        FALSE, BER_UNI_TAG_IA5String,
+        &actx, tree, tvb, offset, hf_othername_eid, NULL
+    );
+    return offset;
+}
+
 /// Overall registration of the protocol
 static void proto_register_tcpcl(void) {
     g_log(LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "proto_register_tcpcl()\n");
@@ -1680,6 +1696,10 @@ static void proto_reg_handoff_tcpcl(void) {
         dissector_handle_t dis_h = create_dissector_handle(dissect_xferext_transferlen, proto_tcpcl);
         dissector_add_uint("tcpclv4.xfer_ext", TCPCL_XFEREXT_TRANSFER_LEN, dis_h);
     }
+
+    register_ber_oid_dissector("1.3.6.1.5.5.7.3.35", NULL, proto_tcpcl, "id-kp-bundleSecurity");
+    register_ber_oid_dissector("1.3.6.1.5.5.7.8.11", dissect_othername_dtneid, proto_tcpcl, "id-on-bundleEID");
+
 
     reinit_tcpcl();
 }
