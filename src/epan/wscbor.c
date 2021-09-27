@@ -1,8 +1,23 @@
-#include "wscbor.h"
+/* wscbor.c
+ * Wireshark CBOR item decoding API.
+ * References:
+ *     RFC 8949: https://tools.ietf.org/html/rfc8949
+ *
+ * Copyright 2019-2021, Brian Sipos <brian.sipos@gmail.com>
+ *
+ * Wireshark - Network traffic analyzer
+ * By Gerald Combs <gerald@wireshark.org>
+ * Copyright 1998 Gerald Combs
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
 #include <epan/packet.h>
+#include <epan/exceptions.h>
 #include <epan/expert.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include "wscbor.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
 #include <ws_version.h>
@@ -19,13 +34,11 @@ static expert_field ei_cbor_invalid = EI_INIT;
 static expert_field ei_cbor_overflow = EI_INIT;
 static expert_field ei_cbor_wrong_type = EI_INIT;
 static expert_field ei_cbor_array_wrong_size = EI_INIT;
-static expert_field ei_item_missing = EI_INIT;
 static ei_register_info expertitems[] = {
     {&ei_cbor_invalid, {"_ws.wscbor.cbor_invalid", PI_MALFORMED, PI_ERROR, "CBOR cannot be decoded", EXPFILL}},
     {&ei_cbor_overflow, {"_ws.wscbor.cbor_overflow", PI_UNDECODED, PI_ERROR, "CBOR overflow of Wireshark value", EXPFILL}},
     {&ei_cbor_wrong_type, {"_ws.wscbor.cbor_wrong_type", PI_MALFORMED, PI_ERROR, "CBOR is wrong type", EXPFILL}},
     {&ei_cbor_array_wrong_size, {"_ws.wscbor.array_wrong_size", PI_MALFORMED, PI_WARN, "CBOR array is the wrong size", EXPFILL}},
-    {&ei_item_missing, {"_ws.wscbor.item_missing", PI_MALFORMED, PI_ERROR, "CBOR item is missing or incorrect type", EXPFILL}},
 };
 
 /// The basic header structure of CBOR encoding
@@ -75,7 +88,8 @@ static void wscbor_read_unsigned(wscbor_head_t *head, tvbuff_t *tvb) {
     }
 }
 
-/** Read just the CBOR head integer.
+/** Read just the CBOR head octet.
+ * @post Will throw wireshark exception if read fails.
  */
 static wscbor_head_t * wscbor_head_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint start) {
     wscbor_head_t *head = wmem_new0(alloc, wscbor_head_t);
@@ -117,7 +131,7 @@ static wscbor_head_t * wscbor_head_read(wmem_allocator_t *alloc, tvbuff_t *tvb, 
 
 /** Force a head to be freed.
  */
-void wscbor_head_free(wmem_allocator_t *alloc, wscbor_head_t *head) {
+static void wscbor_head_free(wmem_allocator_t *alloc, wscbor_head_t *head) {
     wmem_free(alloc, head);
 }
 
@@ -141,7 +155,6 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
     DISSECTOR_ASSERT(alloc != NULL);
     DISSECTOR_ASSERT(offset != NULL);
     DISSECTOR_ASSERT(tvb != NULL);
-    const gint buflen = tvb_captured_length(tvb);
 
     wscbor_chunk_t *chunk = wmem_new0(alloc, wscbor_chunk_t);
     chunk->_alloc = alloc;
@@ -149,12 +162,10 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
     chunk->tags = wmem_list_new(alloc);
     chunk->start = *offset;
 
-    int used_head = 0;
-    while (*offset < buflen) {
+    // Read a sequence of tags followed by an item header
+    while (TRUE) {
+        // This will break out of the loop if it runs out of buffer
         wscbor_head_t *head = wscbor_head_read(alloc, tvb, *offset);
-        if (!head) {
-            break;
-        }
         *offset += head->length;
         chunk->head_length += head->length;
         if (head->error) {
@@ -190,16 +201,8 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
                 break;
         }
 
-        used_head += 1;
         wscbor_head_free(alloc, head);
         break;
-    }
-
-    if (used_head == 0) {
-        wmem_list_append(chunk->errors, wscbor_error_new(alloc, &ei_item_missing, NULL));
-        chunk->type_major = (cbor_type)0xFF;
-        chunk->type_minor = 0xFF;
-        chunk->head_value = 0;
     }
 
     return chunk;
@@ -307,7 +310,7 @@ gboolean wscbor_skip_if_errors(wmem_allocator_t *alloc, tvbuff_t *tvb, gint *off
 void wscbor_init(void) {
     proto_wscbor = proto_register_protocol(
         "CBOR Item Decoder",
-        "wscbor",
+        "CBOR Item Decoder",
         "_ws.wscbor"
     );
 
@@ -529,9 +532,7 @@ proto_item * proto_tree_add_cbor_bitmask(proto_tree *tree, int hfindex, const gi
     }
     tvbuff_t *tvb_flags = tvb_new_child_real_data(tvb, flags, flagsize, flagsize);
 
-    proto_item *item = proto_tree_add_item(tree, hfindex, tvb_flags, 0, flagsize, ENC_BIG_ENDIAN);
-    proto_tree *subtree = proto_item_add_subtree(item, ett);
-    proto_tree_add_bitmask_list_value(subtree, tvb_flags, 0, flagsize, fields, value ? *value : 0);
+    proto_item *item = proto_tree_add_bitmask_value(tree, tvb_flags, 0, hfindex, ett, fields, value ? *value : 0);
     wscbor_chunk_mark_errors(pinfo, item, chunk);
     return item;
 }
@@ -561,10 +562,8 @@ WS_DLL_PUBLIC_DEF const int plugin_want_major = WIRESHARK_VERSION_MAJOR;
 WS_DLL_PUBLIC_DEF const int plugin_want_minor = WIRESHARK_VERSION_MINOR;
 /// Interface for wireshark plugin
 WS_DLL_PUBLIC_DEF void plugin_register(void) {
-#if 0
-    static proto_plugin plugin_bp;
-    plugin_bp.register_protoinfo = wscbor_init;
-    plugin_bp.register_handoff = NULL;
-    proto_register_plugin(&plugin_bp);
-#endif
+    static proto_plugin plugin_wscbor;
+    plugin_wscbor.register_protoinfo = wscbor_init;
+    plugin_wscbor.register_handoff = NULL;
+    proto_register_plugin(&plugin_wscbor);
 }
