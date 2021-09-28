@@ -36,9 +36,9 @@ static int hf_cose_msg = -1;
 /// Field definitions
 static hf_register_info fields[] = {
     {&hf_aad_scope, {"AAD Scope", "bpsec.cose.aad_scope", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_aad_scope_primary, {"Primary Block", "bpsec.cose.aad_scope.primary", FT_UINT8, BASE_DEC, NULL, HAS_PRIMARY_CTX, NULL, HFILL}},
-    {&hf_aad_scope_target, {"Target Block", "bpsec.cose.aad_scope.target", FT_UINT8, BASE_DEC, NULL, HAS_TARGET_CTX, NULL, HFILL}},
-    {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_UINT8, BASE_DEC, NULL, HAS_SECURITY_CTX, NULL, HFILL}},
+    {&hf_aad_scope_primary, {"Primary Block", "bpsec.cose.aad_scope.primary", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_PRIMARY_CTX, NULL, HFILL}},
+    {&hf_aad_scope_target, {"Target Block", "bpsec.cose.aad_scope.target", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_TARGET_CTX, NULL, HFILL}},
+    {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_SECURITY_CTX, NULL, HFILL}},
     {&hf_addl_prot_bstr, {"Additional Protected Headers (bstr)", "bpsec.cose.addl_proected_bstr", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_addl_unprot, {"Additional Unprotected Headers", "bpsec.cose.addl_unprotected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},

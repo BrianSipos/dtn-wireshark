@@ -47,7 +47,7 @@ static hf_register_info fields[] = {
     {&hf_asb_target, {"Target Block Number", "bpsec.asb.target", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_ctxid, {"Context ID", "bpsec.asb.ctxid", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_flags, {"Flags", "bpv7.asb.flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_asb_flags_has_params, {"Parameters Present", "bpv7.asb.flags.has_params", FT_UINT8, BASE_DEC, NULL, ASB_HAS_PARAMS, NULL, HFILL}},
+    {&hf_asb_flags_has_params, {"Parameters Present", "bpv7.asb.flags.has_params", FT_BOOLEAN, 8, TFS(&tfs_set_notset), ASB_HAS_PARAMS, NULL, HFILL}},
     {&hf_asb_secsrc_nodeid, {"Security Source", "bpsec.asb.secsrc.nodeid", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_secsrc_uri, {"Security Source URI", "bpsec.asb.secsrc.uri", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
     {&hf_asb_param_list, {"Security Parameters, Count", "bpsec.asb.param_count", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},

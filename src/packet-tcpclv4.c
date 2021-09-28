@@ -195,7 +195,7 @@ static hf_register_info fields[] = {
     {&hf_chdr_magic, {"Protocol Magic", "tcpclv4.chdr.magic", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_chdr_version, {"Protocol Version", "tcpclv4.chdr.version", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_chdr_flags, {"Contact Flags", "tcpclv4.chdr.flags", FT_UINT8, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_chdr_flags_cantls, {"CAN_TLS", "tcpclv4.chdr.can_tls", FT_UINT8, BASE_DEC, NULL, 0x01, NULL, HFILL}},
+    {&hf_chdr_flags_cantls, {"CAN_TLS", "tcpclv4.chdr.flags.can_tls", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_CONTACT_FLAG_CANTLS, NULL, HFILL}},
     // Contact negotiation results
     {&hf_chdr_related, {"Related Header", "tcpclv4.chdr.related", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_negotiate_use_tls, {"Negotiated Use TLS", "tcpclv4.negotiated.use_tls", FT_BOOLEAN, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -206,7 +206,7 @@ static hf_register_info fields[] = {
     // Session extension fields
     {&hf_sessext_tree, {"Session Extension Item", "tcpclv4.sessext", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_sessext_flags, {"Item Flags", "tcpclv4.sessext.flags", FT_UINT8, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_sessext_flags_crit, {"CRITICAL", "tcpclv4.sessext.flags.critical", FT_UINT8, BASE_DEC, NULL, TCPCL_EXTENSION_FLAG_CRITICAL, NULL, HFILL}},
+    {&hf_sessext_flags_crit, {"CRITICAL", "tcpclv4.sessext.flags.critical", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_EXTENSION_FLAG_CRITICAL, NULL, HFILL}},
     {&hf_sessext_type, {"Item Type", "tcpclv4.sessext.type", FT_UINT8, BASE_HEX, VALS(sessext_type_vals), 0x0, NULL, HFILL}},
     {&hf_sessext_len, {"Item Length", "tcpclv4.sessext.len", FT_UINT32, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_sessext_data, {"Type-Specific Data", "tcpclv4.sessext.data", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -214,7 +214,7 @@ static hf_register_info fields[] = {
     // Transfer extension fields
     {&hf_xferext_tree, {"Transfer Extension Item", "tcpclv4.xferext", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_xferext_flags, {"Item Flags", "tcpclv4.xferext.flags", FT_UINT8, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_xferext_flags_crit, {"CRITICAL", "tcpclv4.xferext.flags.critical", FT_UINT8, BASE_DEC, NULL, TCPCL_EXTENSION_FLAG_CRITICAL, NULL, HFILL}},
+    {&hf_xferext_flags_crit, {"CRITICAL", "tcpclv4.xferext.flags.critical", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_EXTENSION_FLAG_CRITICAL, NULL, HFILL}},
     {&hf_xferext_type, {"Item Type", "tcpclv4.xferext.type", FT_UINT8, BASE_HEX, VALS(xferext_type_vals), 0x0, NULL, HFILL}},
     {&hf_xferext_len, {"Item Length", "tcpclv4.xferext.len", FT_UINT32, BASE_DEC|BASE_UNIT_STRING, &units_octet_octets, 0x0, NULL, HFILL}},
     {&hf_xferext_data, {"Type-Specific Data", "tcpclv4.xferext.data", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
@@ -231,14 +231,14 @@ static hf_register_info fields[] = {
     {&hf_negotiate_keepalive, {"Negotiated Keepalive Interval", "tcpclv4.negotiated.keepalive", FT_UINT16, BASE_DEC|BASE_UNIT_STRING, &units_seconds, 0x0, NULL, HFILL}},
     // SESS_TERM fields
     {&hf_sess_term_flags, {"Flags", "tcpclv4.sess_term.flags", FT_UINT8, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_sess_term_flags_reply, {"REPLY", "tcpclv4.sess_term.flags.reply", FT_UINT8, BASE_DEC, NULL, TCPCL_SESS_TERM_FLAG_REPLY, NULL, HFILL}},
+    {&hf_sess_term_flags_reply, {"REPLY", "tcpclv4.sess_term.flags.reply", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_SESS_TERM_FLAG_REPLY, NULL, HFILL}},
     {&hf_sess_term_reason, {"Reason", "tcpclv4.ses_term.reason", FT_UINT8, BASE_DEC, VALS(sess_term_reason_vals), 0x0, NULL, HFILL}},
     {&hf_sess_term_related, {"Related SESS_TERM", "tcpclv4.ses_term.related", FT_FRAMENUM, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     // Common transfer fields
     {&hf_xfer_flags, {"Transfer Flags", "tcpclv4.xfer_flags", FT_UINT8, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_xfer_flags_start, {"START", "tcpclv4.xfer_flags.start", FT_UINT8, BASE_DEC, NULL, TCPCL_TRANSFER_FLAG_START, NULL, HFILL}},
-    {&hf_xfer_flags_end, {"END", "tcpclv4.xfer_flags.end", FT_UINT8, BASE_DEC, NULL, TCPCL_TRANSFER_FLAG_END, NULL, HFILL}},
+    {&hf_xfer_flags_start, {"START", "tcpclv4.xfer_flags.start", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_TRANSFER_FLAG_START, NULL, HFILL}},
+    {&hf_xfer_flags_end, {"END", "tcpclv4.xfer_flags.end", FT_BOOLEAN, 8, TFS(&tfs_set_notset), TCPCL_TRANSFER_FLAG_END, NULL, HFILL}},
     {&hf_xfer_id, {"Transfer ID", "tcpclv4.xfer_id", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
     {&hf_xfer_total_len, {"Expected Total Length", "tcpclv4.xfer.total_len", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     // XFER_SEGMENT fields
