@@ -143,7 +143,7 @@ guint64 wscbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const wsc
  * @return The error count.
  */
 WS_DLL_PUBLIC
-guint64 wscbor_has_errors(const wscbor_chunk_t *chunk);
+guint wscbor_has_errors(const wscbor_chunk_t *chunk);
 
 /** Determine if an indefinite break is present.
  *

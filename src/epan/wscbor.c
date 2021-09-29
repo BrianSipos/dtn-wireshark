@@ -135,6 +135,25 @@ static void wscbor_head_free(wmem_allocator_t *alloc, wscbor_head_t *head) {
     wmem_free(alloc, head);
 }
 
+/** Get a clamped string length suitable for tvb functions.
+ * @param[in,out] chunk The chunk to read and set errors on.
+ * @return The clamped length value.
+ */
+static gint wscbor_get_length(const wscbor_chunk_t *chunk) {
+    gint length;
+    if (chunk->head_value > G_MAXINT) {
+        wmem_list_append(chunk->errors, wscbor_error_new(
+                chunk->_alloc, &ei_cbor_overflow,
+                NULL
+        ));
+        length = G_MAXINT;
+    }
+    else {
+        length = (gint) chunk->head_value;
+    }
+    return length;
+}
+
 wscbor_error_t * wscbor_error_new(wmem_allocator_t *alloc, expert_field *ei, const char *format, ...) {
     wscbor_error_t *err = wmem_new0(alloc, wscbor_error_t);
     err->ei = ei;
@@ -192,9 +211,10 @@ wscbor_chunk_t * wscbor_chunk_read(wmem_allocator_t *alloc, tvbuff_t *tvb, gint 
             case CBOR_TYPE_BYTESTRING:
             case CBOR_TYPE_STRING:
                 if (chunk->type_minor != 31) {
+                    const gint datalen = wscbor_get_length(chunk);
                     // skip over definite data
-                    *offset += chunk->head_value;
-                    chunk->data_length += chunk->head_value;
+                    *offset += datalen;
+                    chunk->data_length += datalen;
                 }
                 break;
             default:
@@ -237,7 +257,7 @@ guint64 wscbor_chunk_mark_errors(packet_info *pinfo, proto_item *item, const wsc
     return wmem_list_count(chunk->errors);
 }
 
-guint64 wscbor_has_errors(const wscbor_chunk_t *chunk) {
+guint wscbor_has_errors(const wscbor_chunk_t *chunk) {
     return wmem_list_count(chunk->errors);
 }
 
@@ -396,13 +416,16 @@ gint64 * wscbor_require_int64(wmem_allocator_t *alloc, wscbor_chunk_t *chunk) {
     switch (chunk->type_major) {
         case CBOR_TYPE_UINT:
         case CBOR_TYPE_NEGINT: {
-            guint64 clamped = chunk->head_value;
-            if (clamped > INT64_MAX) {
+            gint64 clamped;
+            if (chunk->head_value > INT64_MAX) {
                 clamped = INT64_MAX;
                 wmem_list_append(chunk->errors, wscbor_error_new(
                         chunk->_alloc, &ei_cbor_overflow,
                         NULL
                 ));
+            }
+            else {
+                clamped = chunk->head_value;
             }
 
             result = wmem_new(alloc, gint64);
@@ -423,25 +446,6 @@ gint64 * wscbor_require_int64(wmem_allocator_t *alloc, wscbor_chunk_t *chunk) {
             break;
     }
     return result;
-}
-
-/** Get a clamped string length suitable for tvb functions.
- * @param[in,out] chunk The chunk to read and set errors on.
- * @return The clamped length value.
- */
-static gint wscbor_get_length(const wscbor_chunk_t *chunk) {
-    gint length;
-    if (chunk->head_value > G_MAXINT) {
-        wmem_list_append(chunk->errors, wscbor_error_new(
-                chunk->_alloc, &ei_cbor_overflow,
-                NULL
-        ));
-        length = G_MAXINT;
-    }
-    else {
-        length = (gint) chunk->head_value;
-    }
-    return length;
 }
 
 char * wscbor_require_tstr(wmem_allocator_t *alloc, tvbuff_t *parent, wscbor_chunk_t *chunk) {
