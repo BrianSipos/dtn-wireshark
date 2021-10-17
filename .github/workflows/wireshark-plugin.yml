@@ -7,6 +7,8 @@ jobs:
     runs-on: ubuntu-20.04
 
     env:
+      CC: ccache gcc
+      CXX: ccache g++
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       USE_CCACHE: 1
 
@@ -29,11 +31,6 @@ jobs:
             awscli \
             build-essential \
             ccache \
-            clang-10 \
-            clang-11 \
-            clang-12 \
-            clang-tools \
-            clang-tools-12 \
             colorized-logs \
             cppcheck \
             curl \
