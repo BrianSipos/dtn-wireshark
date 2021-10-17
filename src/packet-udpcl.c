@@ -292,7 +292,7 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
     proto_tree_add_cbor_uint64(tree_xfer, hf_xfer_frag_offset, pinfo, tvb, chunk, xfer_frag_offset);
 
     chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *xfer_fragment = wscbor_require_bstr(tvb, chunk);
+    tvbuff_t *xfer_fragment = wscbor_require_bstr(wmem_packet_scope(), chunk);
     proto_tree_add_cbor_bstr(tree_xfer, hf_xfer_data, pinfo, tvb, chunk);
 
     if (udpcl_desegment_transfer
