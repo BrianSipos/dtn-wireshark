@@ -1,5 +1,5 @@
-#include "packet-bpv7.h"
-#include "epan/wscbor.h"
+#include <epan/dissectors/packet-bpv7.h>
+#include <epan/wscbor.h>
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
@@ -191,18 +191,19 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
             switch (*key) {
                 case ACME_TOKEN_CHAL: {
                     wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    token_chal = wscbor_require_bstr(tvb, chunk);
+                    token_chal = wscbor_require_bstr(wmem_packet_scope(), chunk);
                     item_token_chal = proto_tree_add_cbor_bstr(tree_key, hf_token_chal, pinfo, tvb, chunk);
                     break;
                 }
                 case ACME_TOKEN_BUNDLE: {
                     wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    token_bundle = wscbor_require_bstr(tvb, chunk);
+                    token_bundle = wscbor_require_bstr(wmem_packet_scope(), chunk);
                     item_token_bundle = proto_tree_add_cbor_bstr(tree_key, hf_token_bundle, pinfo, tvb, chunk);
                     break;
                 }
                 case ACME_KEY_AUTH_DIGEST: {
                     wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+                    wscbor_require_bstr(wmem_packet_scope(), chunk);
                     item_key_auth_digest = proto_tree_add_cbor_bstr(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
                     break;
                 }
@@ -296,8 +297,10 @@ void proto_reg_handoff_bp_acme(void) {
 
     /* Packaged extensions */
     {
+        guint64 *key = g_new(guint64, 1);
+        *key = 65536;
         dissector_handle_t hdl = create_dissector_handle(dissect_bp_acme, proto_bp_acme);
-        dissector_add_uint("bpv7.admin_record_type", 65536, hdl);
+        dissector_add_custom_table_handle("bpv7.admin_record_type", key, hdl);
     }
 
     bp_acme_reinit_config();

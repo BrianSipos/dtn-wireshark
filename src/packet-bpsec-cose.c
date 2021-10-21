@@ -1,7 +1,7 @@
-#include "packet-bpsec.h"
-#include "packet-bpv7.h"
-#include "packet-cose.h"
-#include "epan/wscbor.h"
+#include <epan/dissectors/packet-bpsec.h>
+#include <epan/dissectors/packet-bpv7.h>
+#include <epan/dissectors/packet-cose.h>
+#include <epan/wscbor.h>
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
@@ -44,7 +44,7 @@ static hf_register_info fields[] = {
     {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
-static WS_FIELDTYPE aad_scope[] = {
+static int *const aad_scope[] = {
     &hf_aad_scope_primary,
     &hf_aad_scope_target,
     &hf_aad_scope_security,
@@ -83,7 +83,7 @@ static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     gint offset = 0;
 
     wscbor_chunk_t *chunk_prot_bstr = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *prot_bstr = wscbor_require_bstr(tvb, chunk_prot_bstr);
+    tvbuff_t *prot_bstr = wscbor_require_bstr(wmem_packet_scope(), chunk_prot_bstr);
     proto_item *item_prot_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_prot_bstr, pinfo, tvb, chunk_prot_bstr);
     if (prot_bstr) {
         proto_tree *tree_prot_bstr = proto_item_add_subtree(item_prot_bstr, ett_addl_prot_bstr);
@@ -115,7 +115,7 @@ static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     gint offset = 0;
 
     wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *tvb_data = wscbor_require_bstr(tvb, chunk);
+    tvbuff_t *tvb_data = wscbor_require_bstr(wmem_packet_scope(), chunk);
 
     proto_item *item_msg = proto_tree_add_cbor_bstr(tree, hf_cose_msg, pinfo, tvb, chunk);
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
