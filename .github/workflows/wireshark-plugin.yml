@@ -26,7 +26,7 @@ jobs:
       run: |
         git clone https://gitlab.com/BrianSipos/wireshark.git
         cd wireshark
-        git checkout 17660-fix-wsgutil
+        git checkout master
         sudo ./tools/debian-setup.sh ${COMMON_APT_GET_ARGS} --install-optional --install-deb-deps --install-test-deps \
             awscli \
             build-essential \
