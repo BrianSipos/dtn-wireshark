@@ -7,9 +7,9 @@
 #include <epan/dissectors/packet-udp.h>
 #include <epan/dissectors/packet-dtls.h>
 #include <epan/exceptions.h>
+#include <epan/wscbor.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include "epan/wscbor.h"
 #include "packet-udpcl.h"
 
 #if defined(WIRESHARK_HAS_VERSION_H)
@@ -559,7 +559,7 @@ static void proto_reg_handoff_udpcl(void) {
 
     handle_cbor = find_dissector("cbor");
     handle_dtls = find_dissector_add_dependency(DTLS_DISSECTOR_NAME, proto_udpcl);
-    handle_bpv6 = find_dissector_add_dependency("bundle", proto_udpcl);
+    handle_bpv6 = find_dissector_add_dependency("bpv6", proto_udpcl);
     handle_bpv7 = find_dissector_add_dependency("bpv7", proto_udpcl);
 
     /* Packaged extensions */
