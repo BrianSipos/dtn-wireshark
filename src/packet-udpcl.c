@@ -113,7 +113,7 @@ static hf_register_info fields[] = {
     {&hf_rtn_interval, {"Interval", "udpcl.ext.rtn.interval", FT_UINT64, BASE_DEC | BASE_UNIT_STRING, &units_milliseconds, 0x0, NULL, HFILL}},
 
     {&hf_ext_nodeid, {"Sender Node ID", "udpcl.ext.nodeid", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, STR_UNICODE, NULL, 0x0, NULL, HFILL}},
+    {&hf_nodeid_str, {"Node ID", "udpcl.ext.nodeid.str", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
     {&hf_ext_starttls, {"Initiate DTLS", "udpcl.ext.starttls", FT_PROTOCOL, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
