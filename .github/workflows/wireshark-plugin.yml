@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     env:
       CC: ccache gcc
@@ -14,14 +14,14 @@ jobs:
 
     steps:
     - name: Retrieve cache
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ubuntu-ccache-${{ github.sha }}
         restore-keys: |
           ubuntu-ccache-
 
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v3
     - name: wireshark
       run: |
         git clone https://gitlab.com/BrianSipos/wireshark.git
