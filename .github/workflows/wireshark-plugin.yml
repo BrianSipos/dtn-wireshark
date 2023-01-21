@@ -47,7 +47,9 @@ jobs:
             sloccount \
             zip
         cmake -S . -B build -GNinja
-        sudo cmake --build build --target install
+        cmake --build build
+        sudo cmake --install build
+        sudo cmake --install build --component Development
     - name: dependencies
       run: |
         sudo apt-get update && sudo apt-get install git cmake build-essential libgcrypt-dev gnutls-dev libgtest-dev
@@ -57,7 +59,7 @@ jobs:
     - name: build
       run: |
         cmake --build build/ --target all
-        sudo cmake --build build --target install
+        sudo cmake --install build
     - name: check
       run: |
         cd build
