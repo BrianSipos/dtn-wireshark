@@ -41,7 +41,7 @@ jobs:
             jq \
             lintian \
             locales \
-            python-pygments \
+            python3-pygments \
             python3-pytest-xdist \
             shellcheck \
             sloccount \
