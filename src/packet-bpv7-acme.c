@@ -31,21 +31,21 @@ typedef struct {
     /// ACME token-bundle as a nonce
     GBytes *token_bundle;
     /// EID of the challenge source or response destination
-    const gchar *server_nodeid;
+    address server_nodeid;
     /// EID of the challenge source or response destination
-    const gchar *client_nodeid;
+    address client_nodeid;
 } bp_acme_corr_t;
 
 static bp_acme_corr_t * bp_acme_corr_new(wmem_allocator_t *alloc, const bp_bundle_t *bundle) {
     bp_acme_corr_t *obj = wmem_new0(alloc, bp_acme_corr_t);
     const gboolean is_req = bundle->primary->flags & BP_BUNDLE_USER_APP_ACK;
     if (is_req) {
-        obj->server_nodeid = bundle->primary->src_nodeid->uri;
-        obj->client_nodeid = bundle->primary->dst_eid->uri;
+        copy_address_shallow(&(obj->server_nodeid), &(bundle->primary->src_nodeid->uri));
+        copy_address_shallow(&(obj->client_nodeid), &(bundle->primary->dst_eid->uri));
     }
     else {
-        obj->client_nodeid = bundle->primary->src_nodeid->uri;
-        obj->server_nodeid = bundle->primary->dst_eid->uri;
+        copy_address_shallow(&(obj->client_nodeid), &(bundle->primary->src_nodeid->uri));
+        copy_address_shallow(&(obj->server_nodeid), &(bundle->primary->dst_eid->uri));
 
     }
     return obj;
@@ -63,8 +63,7 @@ static gboolean bp_acme_corr_equal(gconstpointer a, gconstpointer b) {
     const bp_acme_corr_t *aobj = a;
     const bp_acme_corr_t *bobj = b;
     return (
-        (aobj->server_nodeid && bobj->server_nodeid
-            && g_str_equal(aobj->server_nodeid, bobj->server_nodeid))
+        addresses_equal(&(aobj->server_nodeid), &(bobj->server_nodeid))
         && g_bytes_equal(&(aobj->id_chal), &(bobj->id_chal))
         && g_bytes_equal(&(aobj->token_bundle), &(bobj->token_bundle))
     );
@@ -75,25 +74,18 @@ static gboolean bp_acme_corr_equal(gconstpointer a, gconstpointer b) {
 static guint bp_acme_corr_hash(gconstpointer key) {
     const bp_acme_corr_t *obj = key;
     return (
-        g_str_hash(obj->server_nodeid ? obj->server_nodeid : "")
+        add_address_to_hash(0, &(obj->server_nodeid))
         ^ g_bytes_hash(obj->id_chal)
         ^ g_bytes_hash(obj->token_bundle)
     );
 }
 
-/** Function to match the GHFunc signature.
- */
-static void bp_acme_corr_cleanup(gpointer key, gpointer value _U_, gpointer user_data) {
-    bp_acme_corr_t *obj = key;
-    wmem_allocator_t *alloc = user_data;
-    bp_acme_corr_free(alloc, obj);
-}
-
-
 /// Challenge--response pair
 typedef struct {
     bp_bundle_t *server_msg;
     bp_bundle_t *client_msg;
+    /// Priority list of acceptable alg ID (GVariant *)
+    wmem_list_t *req_algs;
 } bp_acme_exchange_t;
 
 /// Metadata for an entire file
@@ -103,6 +95,29 @@ typedef struct {
     wmem_map_t *exchange;
 
 } bp_acme_history_t;
+
+/// Match the GFunc signature
+static void gvariant_free(gpointer value, gpointer user_data _U_) {
+    g_variant_unref((GVariant*)value);
+}
+
+static void bp_acme_alg_list_free(wmem_list_t *list) {
+    wmem_list_foreach(list, gvariant_free, NULL);
+    wmem_destroy_list(list);
+}
+
+/** Function to match the GHFunc signature.
+ */
+static void bp_acme_history_cleanup(gpointer key, gpointer value, gpointer user_data) {
+    bp_acme_corr_t *corr = key;
+    bp_acme_exchange_t *exc = value;
+    wmem_allocator_t *alloc = user_data;
+
+    bp_acme_corr_free(alloc, corr);
+    if (exc->req_algs) {
+        bp_acme_alg_list_free(exc->req_algs);
+    }
+}
 
 static proto_item * proto_tree_add_bytes_base64url(proto_tree *tree, int hfindex, tvbuff_t *tvb,
                                          gint start, gint length) {
@@ -138,24 +153,30 @@ static bp_acme_history_t *bp_acme_history = NULL;
 
 /// Dissect opaque CBOR data
 static dissector_handle_t handle_cbor = NULL;
+static dissector_handle_t handle_cose_alg = NULL;
 
 typedef enum {
     ACME_ID_CHAL = 1,
     ACME_TOKEN_BUNDLE = 2,
     ACME_KEY_AUTH_DIGEST = 3,
+    ACME_HASH_LIST = 4,
 } AcmeKey;
 
 static const val64_string key_vals[] = {
     {1, "id-chal"},
     {2, "token-bundle" },
     {3, "key-auth-digest" },
+    {4, "hash-list" },
     {0, NULL }
 };
 
 static int hf_acme_key = -1;
 static int hf_id_chal = -1;
 static int hf_token_bundle = -1;
+static int hf_key_auth = -1;
 static int hf_key_auth_digest = -1;
+static int hf_hash_list = -1;
+//static int hf_hash_alg_tstr = -1;
 static int hf_as_b64 = -1;
 static int hf_related_resp = -1;
 static int hf_related_chal = -1;
@@ -164,7 +185,9 @@ static hf_register_info fields[] = {
     {&hf_acme_key, {"Item Key", "bpv7.acme.item_key", FT_INT64, BASE_DEC|BASE_VAL64_STRING, VALS64(key_vals), 0x0, NULL, HFILL}},
     {&hf_id_chal, {"Validation id-chal", "bpv7.acme.id_chal", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_token_bundle, {"Validation token-bundle", "bpv7.acme.token_bundle", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_key_auth_digest, {"Key Auth. Digest", "bpv7.acme.key_auth_digest", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_key_auth, {"Key Authorization", "bpv7.acme.key_auth", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_key_auth_digest, {"Hash Value", "bpv7.acme.key_auth_digest", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_hash_list, {"Acceptable Hash List, Count", "bpv7.acme.hash_list", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_as_b64, {"Data as base64url", "bpv7.acme.b64", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_related_resp, {"Related response bundle", "bpv7.acme.related_resp", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_RESPONSE), 0x0, NULL, HFILL}},
     {&hf_related_chal, {"Related challenge bundle", "bpv7.acme.related_chall", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_REQUEST), 0x0, NULL, HFILL}},
@@ -172,24 +195,49 @@ static hf_register_info fields[] = {
 
 static int ett_acme = -1;
 static int ett_acme_key = -1;
+static int ett_hash_list = -1;
+static int ett_key_auth = -1;
 /// Tree structures
 static int *ett[] = {
     &ett_acme,
     &ett_acme_key,
+    &ett_hash_list,
+    &ett_key_auth,
 };
 
 static expert_field ei_acme_key_unknown = EI_INIT;
 static expert_field ei_no_id_chal = EI_INIT;
 static expert_field ei_no_token_bundle = EI_INIT;
+static expert_field ei_missing_hash_list = EI_INIT;
 static expert_field ei_unexpected_key_auth_hash = EI_INIT;
-static expert_field ei_missing_key_auth_hash = EI_INIT;
+static expert_field ei_missing_key_auth = EI_INIT;
+static expert_field ei_unacceptable_hash_alg = EI_INIT;
 static ei_register_info expertitems[] = {
     {&ei_acme_key_unknown, {"bpv7.acme.key_unknown", PI_UNDECODED, PI_WARN, "Unknown key code", EXPFILL}},
     {&ei_no_id_chal, {"bpv7.acme.no_id_chal", PI_PROTOCOL, PI_ERROR, "Missing id-chal", EXPFILL}},
     {&ei_no_token_bundle, {"bpv7.acme.no_token_bundle", PI_PROTOCOL, PI_ERROR, "Missing token-bundle", EXPFILL}},
+    {&ei_missing_hash_list, {"bpv7.acme.missing_hash_list", PI_PROTOCOL, PI_ERROR, "Missing acceptable hash list", EXPFILL}},
     {&ei_unexpected_key_auth_hash, {"bpv7.acme.unexpected_key_auth_hash", PI_PROTOCOL, PI_ERROR, "Unexpected key authorization hash", EXPFILL}},
-    {&ei_missing_key_auth_hash, {"bpv7.acme.missing_key_auth_hash", PI_PROTOCOL, PI_ERROR, "Missing key authorization hash", EXPFILL}},
+    {&ei_missing_key_auth, {"bpv7.acme.missing_key_auth", PI_PROTOCOL, PI_ERROR, "Missing key authorization hash", EXPFILL}},
+    {&ei_unacceptable_hash_alg, {"bpv7.acme.unacceptable_hash_alg", PI_PROTOCOL, PI_WARN, "Unacceptable key authorization hash", EXPFILL}},
 };
+
+static void dissect_value_alg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, gint *offset, GVariant **value) {
+    if (value) {
+        *value = NULL;
+    }
+    tvbuff_t *subtvb = tvb_new_subset_remaining(tvb, *offset);
+    int sublen = 0;
+    if (handle_cose_alg) {
+        sublen = call_dissector_only(handle_cose_alg, subtvb, pinfo, tree, value);
+    }
+    if (sublen == 0) {
+        sublen = call_dissector_only(handle_cbor, subtvb, pinfo, tree, value);
+    }
+    if (sublen > 0) {
+        *offset += sublen;
+    }
+}
 
 static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data) {
     bp_dissector_data_t *context = (bp_dissector_data_t *)data;
@@ -203,52 +251,37 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
     const gboolean is_req = context->bundle->primary->flags & BP_BUNDLE_USER_APP_ACK;
     proto_item *item_id_chal = NULL;
     proto_item *item_token_bundle = NULL;
-    proto_item *item_key_auth_digest = NULL;
+    proto_item *item_key_auth = NULL;
+    proto_item *item_hash_list = NULL;
 
     bp_acme_corr_t *corr = bp_acme_corr_new(wmem_file_scope(), context->bundle);
+    wmem_list_t *req_algs = NULL;
+    GVariant *resp_alg = NULL;
 
-    wscbor_chunk_t *chunk_msg = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    wscbor_chunk_t *chunk_msg = wscbor_chunk_read(pinfo->pool, tvb, &offset);
     wscbor_require_map(chunk_msg);
     proto_item *item_acme = proto_tree_add_cbor_container(tree, proto_bp_acme, pinfo, tvb, chunk_msg);
     proto_tree *tree_acme = proto_item_add_subtree(item_acme, ett_acme);
 
-    const char *name = wmem_strdup_printf(wmem_packet_scope(), "ACME %s Bundle", is_req ? "Challenge" : "Response");
+    const char *name = wmem_strdup_printf(pinfo->pool, "ACME %s Bundle", is_req ? "Challenge" : "Response");
     proto_item_append_text(item_acme, ": %s", name);
-    alloc_address_wmem(
-        pinfo->pool,
-        &(pinfo->src),
-        AT_STRINGZ,
-        strlen(context->bundle->primary->src_nodeid->uri)+1,
-        context->bundle->primary->src_nodeid->uri
-    );
-    alloc_address_wmem(
-        pinfo->pool,
-        &(pinfo->dst),
-        AT_STRINGZ,
-        strlen(context->bundle->primary->dst_eid->uri)+1,
-        context->bundle->primary->dst_eid->uri
-    );
-    col_append_sep_fstr(pinfo->cinfo, COL_INFO, NULL, "%s %s %s: %s",
-                        context->bundle->primary->src_nodeid->uri,
-                        UTF8_RIGHTWARDS_ARROW,
-                        context->bundle->primary->dst_eid->uri,
-                        name);
+    col_append_sep_fstr(pinfo->cinfo, COL_INFO, NULL, "%s", name);
 
-    if (!wscbor_skip_if_errors(wmem_packet_scope(), tvb, &offset, chunk_msg)) {
+    if (!wscbor_skip_if_errors(pinfo->pool, tvb, &offset, chunk_msg)) {
         for (guint64 ix = 0; ix < chunk_msg->head_value; ++ix) {
-            wscbor_chunk_t *chunk_key = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-            gint64 *key = wscbor_require_int64(wmem_packet_scope(), chunk_key);
+            wscbor_chunk_t *chunk_key = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+            gint64 *key = wscbor_require_int64(pinfo->pool, chunk_key);
             proto_item *item_key = proto_tree_add_cbor_int64(tree_acme, hf_acme_key, pinfo, tvb, chunk_key, key);
             proto_tree *tree_key = proto_item_add_subtree(item_key, ett_acme_key);
 
             if (!key) {
-                wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                wscbor_skip_next_item(pinfo->pool, tvb, &offset);
                 continue;
             }
             switch (*key) {
                 case ACME_ID_CHAL: {
-                    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    tvbuff_t *data = wscbor_require_bstr(wmem_packet_scope(), chunk);
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+                    tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
                     item_id_chal = proto_tree_add_cbor_bstr(tree_key, hf_id_chal, pinfo, tvb, chunk);
                     PROTO_ITEM_SET_GENERATED(
                         proto_tree_add_bytes_base64url(tree_key, hf_as_b64, data, 0, -1)
@@ -257,8 +290,8 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                     break;
                 }
                 case ACME_TOKEN_BUNDLE: {
-                    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    tvbuff_t *data = wscbor_require_bstr(wmem_packet_scope(), chunk);
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+                    tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
                     item_token_bundle = proto_tree_add_cbor_bstr(tree_key, hf_token_bundle, pinfo, tvb, chunk);
                     PROTO_ITEM_SET_GENERATED(
                         proto_tree_add_bytes_base64url(tree_key, hf_as_b64, data, 0, -1)
@@ -267,17 +300,46 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                     break;
                 }
                 case ACME_KEY_AUTH_DIGEST: {
-                    wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-                    tvbuff_t *data = wscbor_require_bstr(wmem_packet_scope(), chunk);
-                    item_key_auth_digest = proto_tree_add_cbor_bstr(tree_key, hf_key_auth_digest, pinfo, tvb, chunk);
-                    PROTO_ITEM_SET_GENERATED(
-                        proto_tree_add_bytes_base64url(tree_key, hf_as_b64, data, 0, -1)
-                    );
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+                    wscbor_require_array_size(chunk, 2, 2);
+                    item_key_auth = proto_tree_add_cbor_container(tree_key, hf_key_auth, pinfo, tvb, chunk);
+                    if (!wscbor_has_errors(chunk)) {
+                        proto_tree *tree_digest = proto_item_add_subtree(item_key_auth, ett_hash_list);
+
+                        dissect_value_alg(tvb, pinfo, tree_digest, &offset, &resp_alg);
+
+                        chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+                        tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
+                        proto_tree_add_cbor_bstr(tree_digest, hf_key_auth_digest, pinfo, tvb, chunk);
+                        PROTO_ITEM_SET_GENERATED(
+                                proto_tree_add_bytes_base64url(tree_digest, hf_as_b64, data, 0, -1)
+                        );
+                    }
+                    proto_item_set_end(item_key_auth, tvb, offset);
+                    break;
+                }
+                case ACME_HASH_LIST: {
+                    wscbor_chunk_t *chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+                    wscbor_require_array(chunk);
+                    item_hash_list = proto_tree_add_cbor_container(tree_key, hf_hash_list, pinfo, tvb, chunk);
+                    if (!wscbor_has_errors(chunk)) {
+                        const guint64 count = chunk->head_value;
+                        proto_tree *tree_list = proto_item_add_subtree(item_hash_list, ett_hash_list);
+                        req_algs = wmem_list_new(wmem_file_scope());
+                        for (guint64 alg_ix = 0; alg_ix < count; ++alg_ix) {
+                            GVariant *algid = NULL;
+                            dissect_value_alg(tvb, pinfo, tree_list, &offset, &algid);
+                            if (algid) {
+                                wmem_list_append(req_algs, algid);
+                            }
+                        }
+                    }
+                    proto_item_set_end(item_hash_list, tvb, offset);
                     break;
                 }
                 default: {
                     guint init_offset = offset;
-                    wscbor_skip_next_item(wmem_packet_scope(), tvb, &offset);
+                    wscbor_skip_next_item(pinfo->pool, tvb, &offset);
                     expert_add_info(pinfo, item_key, &ei_acme_key_unknown);
 
                     tvbuff_t *tvb_item = tvb_new_subset_length(tvb, init_offset, offset);
@@ -291,19 +353,6 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
         }
     }
 
-    if (!item_id_chal) {
-        expert_add_info(pinfo, item_acme, &ei_no_id_chal);
-    }
-    if (!item_token_bundle) {
-        expert_add_info(pinfo, item_acme, &ei_no_token_bundle);
-    }
-    if (is_req && item_key_auth_digest) {
-        expert_add_info(pinfo, item_acme, &ei_missing_key_auth_hash);
-    }
-    if (!is_req && !item_key_auth_digest) {
-        expert_add_info(pinfo, item_acme, &ei_unexpected_key_auth_hash);
-    }
-
     bp_acme_exchange_t *exc = wmem_map_lookup(bp_acme_history->exchange, corr);
     if (!exc) {
         exc = wmem_new0(wmem_file_scope(), bp_acme_exchange_t);
@@ -311,6 +360,15 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
     }
     else {
         bp_acme_corr_free(wmem_file_scope(), corr);
+    }
+
+    if (req_algs) {
+        if (!(exc->req_algs)) {
+            exc->req_algs = req_algs;
+        }
+        else {
+            bp_acme_alg_list_free(req_algs);
+        }
     }
 
     bp_bundle_t **self = (is_req ? &(exc->client_msg) : &(exc->server_msg));
@@ -324,6 +382,37 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
         PROTO_ITEM_SET_GENERATED(item_rel);
     }
 
+    if (!item_id_chal) {
+        expert_add_info(pinfo, item_acme, &ei_no_id_chal);
+    }
+    if (!item_token_bundle) {
+        expert_add_info(pinfo, item_acme, &ei_no_token_bundle);
+    }
+    if (is_req) {
+        if (item_key_auth) {
+            expert_add_info(pinfo, item_acme, &ei_unexpected_key_auth_hash);
+        }
+        if (!item_hash_list) {
+            expert_add_info(pinfo, item_acme, &ei_missing_hash_list);
+        }
+    }
+    else {
+        if (!item_key_auth) {
+            expert_add_info(pinfo, item_acme, &ei_missing_key_auth);
+        }
+        else if (exc->req_algs) {
+            wmem_list_frame_t *found =
+                wmem_list_find_custom(exc->req_algs, resp_alg, g_variant_compare);
+            printf("%s found %p\n", g_variant_print(resp_alg, TRUE), (void*)found);
+            if (!found) {
+                expert_add_info(pinfo, item_key_auth, &ei_unacceptable_hash_alg);
+            }
+        }
+    }
+
+    if (resp_alg) {
+        g_variant_unref(resp_alg);
+    }
     proto_item_set_len(item_acme, offset);
     return offset;
 }
@@ -335,7 +424,7 @@ static void bp_acme_init(void) {
 }
 
 static void bp_acme_cleanup(void) {
-    wmem_map_foreach(bp_acme_history->exchange, bp_acme_corr_cleanup, wmem_file_scope());
+    wmem_map_foreach(bp_acme_history->exchange, bp_acme_history_cleanup, wmem_file_scope());
 }
 
 /// Re-initialize after a configuration change
@@ -360,6 +449,7 @@ void proto_register_bp_acme(void) {
 
 void proto_reg_handoff_bp_acme(void) {
     handle_cbor = find_dissector("cbor");
+    handle_cose_alg = find_dissector("cose.alg");
 
     /* Packaged extensions */
     {
