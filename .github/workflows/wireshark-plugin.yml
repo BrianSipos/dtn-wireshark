@@ -1,6 +1,13 @@
 name: Wireshark Plugin
 
-on: [push]
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  push:
+    branches:
+    - main
+  pull_request: {} # any target
+
 
 jobs:
   build:
