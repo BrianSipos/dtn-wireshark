@@ -31,7 +31,7 @@ jobs:
     - uses: actions/checkout@v3
     - name: wireshark
       run: |
-        git clone https://gitlab.com/BrianSipos/wireshark.git
+        git clone https://gitlab.com/wireshark/wireshark.git
         cd wireshark
         git checkout master
         sudo ./tools/debian-setup.sh ${COMMON_APT_GET_ARGS} --install-optional --install-deb-deps --install-test-deps \
