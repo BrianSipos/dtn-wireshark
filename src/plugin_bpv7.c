@@ -17,6 +17,8 @@ void proto_reg_handoff_bpsec_cose(void);
 #define PP_STRINGIZE_I(text) #text
 
 /// Interface for wireshark plugin
+WS_DLL_PUBLIC_DEF const char plugin_type[] = "epan_plugin";
+/// Interface for wireshark plugin
 WS_DLL_PUBLIC_DEF const char plugin_version[] = "0.0";
 /// Interface for wireshark plugin
 WS_DLL_PUBLIC_DEF const char plugin_release[] = PP_STRINGIZE_I(WIRESHARK_VERSION_MAJOR) "." PP_STRINGIZE_I(WIRESHARK_VERSION_MINOR);
