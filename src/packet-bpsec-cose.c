@@ -5,6 +5,7 @@
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
+#include <epan/tfs.h>
 #include <epan/expert.h>
 #include <epan/to_str.h>
 #include <inttypes.h>
@@ -13,13 +14,15 @@
  * Section 3.2.2.
  */
 typedef enum {
-    HAS_PRIMARY_CTX = 0x01,
-    HAS_TARGET_CTX = 0x02,
-    HAS_SECURITY_CTX = 0x04,
+    AAD_METADATA = 0x01,
+    AAD_BTSD = 0x02,
 } AadScopeFlag;
 
+/// IANA registered security context ID
+static const int64_t bpsec_cose_ctxid = 3;
+
 /// Protocol handles
-static int proto_bpsec_cose = -1;
+static int proto_bpsec_cose;
 
 /// Dissect opaque CBOR parameters/results
 static dissector_table_t table_cose_msg = NULL;
@@ -27,52 +30,70 @@ static dissector_table_t table_cose_msg = NULL;
 static dissector_handle_t handle_cose_msg_hdr = NULL;
 
 static int hf_aad_scope = -1;
-static int hf_aad_scope_primary = -1;
-static int hf_aad_scope_target = -1;
-static int hf_aad_scope_security = -1;
+static int hf_aad_blknum = -1;
+static int hf_aad_flags = -1;
+static int hf_aad_flags_metadata = -1;
+static int hf_aad_flags_btsd = -1;
 static int hf_addl_prot_bstr = -1;
-static int hf_addl_unprot = -1;
+static int hf_addl_unprot_bstr = -1;
 static int hf_cose_msg = -1;
 /// Field definitions
 static hf_register_info fields[] = {
-    {&hf_aad_scope, {"AAD Scope", "bpsec.cose.aad_scope", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
-    {&hf_aad_scope_primary, {"Primary Block", "bpsec.cose.aad_scope.primary", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_PRIMARY_CTX, NULL, HFILL}},
-    {&hf_aad_scope_target, {"Target Block", "bpsec.cose.aad_scope.target", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_TARGET_CTX, NULL, HFILL}},
-    {&hf_aad_scope_security, {"BPSec Block", "bpsec.cose.aad_scope.security", FT_BOOLEAN, 8, TFS(&tfs_set_notset), HAS_SECURITY_CTX, NULL, HFILL}},
+    {&hf_aad_scope, {"AAD Scope, Block count", "bpsec.cose.aad_scope", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_aad_blknum, {"Block Number", "bpsec.cose.aad_scope.blknum", FT_INT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_aad_flags, {"Flags", "bpsec.cose.aad_scope.flags", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL}},
+    {&hf_aad_flags_metadata, {"Metadata", "bpsec.cose.aad_scope.flags.metadata", FT_BOOLEAN, 8, TFS(&tfs_set_notset), AAD_METADATA, NULL, HFILL}},
+    {&hf_aad_flags_btsd, {"BTSD", "bpsec.cose.aad_scope.flags.btsd", FT_BOOLEAN, 8, TFS(&tfs_set_notset), AAD_BTSD, NULL, HFILL}},
     {&hf_addl_prot_bstr, {"Additional Protected Headers (bstr)", "bpsec.cose.addl_proected_bstr", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
-    {&hf_addl_unprot, {"Additional Unprotected Headers", "bpsec.cose.addl_unprotected", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_addl_unprot_bstr, {"Additional Unprotected Headers (bstr)", "bpsec.cose.addl_unprotected", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
     {&hf_cose_msg, {"COSE Message (bstr)", "bpsec.cose.msg", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL}},
 };
 
-static int *const aad_scope[] = {
-    &hf_aad_scope_primary,
-    &hf_aad_scope_target,
-    &hf_aad_scope_security,
+static int *const aad_flags[] = {
+    &hf_aad_flags_metadata,
+    &hf_aad_flags_btsd,
     NULL
 };
 
 static int ett_aad_scope = -1;
-static int ett_addl_prot_bstr = -1;
-static int ett_addl_prot = -1;
-static int ett_addl_unprot = -1;
+static int ett_aad_blknum = -1;
+static int ett_aad_flags = -1;
+static int ett_addl_hdr_bstr = -1;
+static int ett_addl_hdr = -1;
 static int ett_cose_msg = -1;
 /// Tree structures
 static int *ett[] = {
     &ett_aad_scope,
-    &ett_addl_prot_bstr,
-    &ett_addl_prot,
-    &ett_addl_unprot,
+    &ett_aad_blknum,
+    &ett_aad_flags,
+    &ett_addl_hdr_bstr,
+    &ett_addl_hdr,
     &ett_cose_msg,
 };
 
 /** Dissector for AAD Scope parameter.
  */
 static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
-    gint offset = 0;
+    int offset = 0;
 
-    wscbor_chunk_t *chunk_flags = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    guint64 *flags = wscbor_require_uint64(wmem_packet_scope(), chunk_flags);
-    proto_tree_add_cbor_bitmask(tree, hf_aad_scope, ett_aad_scope, aad_scope, pinfo, tvb, chunk_flags, flags);
+    wscbor_chunk_t *chunk_aad_map = wscbor_chunk_read(pinfo->pool, tvb, &offset);
+    wscbor_require_map(chunk_aad_map);
+    proto_item *item_aad_map = proto_tree_add_cbor_container(tree, hf_aad_scope, pinfo, tvb, chunk_aad_map);
+    wscbor_chunk_mark_errors(pinfo, item_aad_map, chunk_aad_map);
+    if (!wscbor_skip_if_errors(pinfo->pool, tvb, &offset, chunk_aad_map)) {
+        proto_tree *tree_aad_map = proto_item_add_subtree(item_aad_map, ett_aad_scope);
+
+        for (guint64 ix = 0; ix < chunk_aad_map->head_value; ++ix) {
+            wscbor_chunk_t *chunk_blknum = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            int64_t *blknum = wscbor_require_int64(wmem_packet_scope(), chunk_blknum);
+            proto_item *item_blknum = proto_tree_add_cbor_int64(tree_aad_map, hf_aad_blknum, pinfo, tvb, chunk_blknum, blknum);
+            proto_tree *tree_blknum = proto_item_add_subtree(item_blknum, ett_aad_blknum);
+
+            wscbor_chunk_t *chunk_flags = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+            guint64 *flags = wscbor_require_uint64(wmem_packet_scope(), chunk_flags);
+            proto_tree_add_cbor_bitmask(tree_blknum, hf_aad_flags, ett_aad_flags, aad_flags, pinfo, tvb, chunk_flags, flags);
+        }
+    }
 
     return offset;
 }
@@ -80,15 +101,15 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
 /** Dissector for COSE protected header.
  */
 static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
-    gint offset = 0;
+    int offset = 0;
 
-    wscbor_chunk_t *chunk_prot_bstr = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
-    tvbuff_t *prot_bstr = wscbor_require_bstr(wmem_packet_scope(), chunk_prot_bstr);
-    proto_item *item_prot_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_prot_bstr, pinfo, tvb, chunk_prot_bstr);
-    if (prot_bstr) {
-        proto_tree *tree_prot_bstr = proto_item_add_subtree(item_prot_bstr, ett_addl_prot_bstr);
+    wscbor_chunk_t *chunk_hdr_bstr = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *hdr_bstr = wscbor_require_bstr(wmem_packet_scope(), chunk_hdr_bstr);
+    proto_item *item_hdr_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_prot_bstr, pinfo, tvb, chunk_hdr_bstr);
+    if (hdr_bstr) {
+        proto_tree *tree_hdr_bstr = proto_item_add_subtree(item_hdr_bstr, ett_addl_hdr_bstr);
 
-        int sublen = call_dissector(handle_cose_msg_hdr, prot_bstr, pinfo, tree_prot_bstr);
+        int sublen = call_dissector(handle_cose_msg_hdr, hdr_bstr, pinfo, tree_hdr_bstr);
         if (sublen < 0) {
             return sublen;
         }
@@ -101,18 +122,30 @@ static int dissect_addl_protected(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 /** Dissector for COSE unprotected header.
  */
 static int dissect_addl_unprotected(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
-    proto_item *item_hdr = proto_tree_add_item(tree, hf_addl_unprot, tvb, 0, -1, ENC_NA);
-    proto_tree *tree_hdr = proto_item_add_subtree(item_hdr, ett_addl_prot);
-    int sublen = call_dissector(handle_cose_msg_hdr, tvb, pinfo, tree_hdr);
-    return sublen;
+    int offset = 0;
+
+    wscbor_chunk_t *chunk_hdr_bstr = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
+    tvbuff_t *hdr_bstr = wscbor_require_bstr(wmem_packet_scope(), chunk_hdr_bstr);
+    proto_item *item_hdr_bstr = proto_tree_add_cbor_bstr(tree, hf_addl_unprot_bstr, pinfo, tvb, chunk_hdr_bstr);
+    if (hdr_bstr) {
+        proto_tree *tree_hdr_bstr = proto_item_add_subtree(item_hdr_bstr, ett_addl_hdr_bstr);
+
+        int sublen = call_dissector(handle_cose_msg_hdr, hdr_bstr, pinfo, tree_hdr_bstr);
+        if (sublen < 0) {
+            return sublen;
+        }
+        offset += sublen;
+    }
+
+    return offset;
 }
 
 /** Dissector for bstr-wrapped CBOR.
  */
 static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data) {
-    gint64 *typeid = data;
-    DISSECTOR_ASSERT(typeid != NULL);
-    gint offset = 0;
+    bpsec_id_t *secid = data;
+    DISSECTOR_ASSERT(secid != NULL);
+    int offset = 0;
 
     wscbor_chunk_t *chunk = wscbor_chunk_read(wmem_packet_scope(), tvb, &offset);
     tvbuff_t *tvb_data = wscbor_require_bstr(wmem_packet_scope(), chunk);
@@ -121,7 +154,7 @@ static int dissect_cose_msg(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     proto_tree *tree_msg = proto_item_add_subtree(item_msg, ett_cose_msg);
 
     if (tvb_data) {
-        dissector_handle_t dissector = dissector_get_custom_table_handle(table_cose_msg, typeid);
+        dissector_handle_t dissector = dissector_get_custom_table_handle(table_cose_msg, &(secid->type_id));
         int sublen = call_dissector(dissector, tvb_data, pinfo, tree_msg);
         if (sublen < 0) {
             return sublen;
@@ -138,7 +171,7 @@ static void reinit_bpsec_cose(void) {
 /// Overall registration of the protocol
 void proto_register_bpsec_cose(void) {
     proto_bpsec_cose = proto_register_protocol(
-        "BPSec COSE", /* name */
+        "BPSec COSE Context", /* name */
         "BPSec COSE", /* short name */
         "bpsec-cose" /* abbrev */
     );
@@ -149,46 +182,42 @@ void proto_register_bpsec_cose(void) {
     prefs_register_protocol(proto_bpsec_cose, reinit_bpsec_cose);
 }
 
+static void bpsec_cose_result_register(int64_t result_id, const char *dis_name) {
+    bpsec_id_t *rkey = bpsec_id_new(NULL, bpsec_cose_ctxid, result_id);
+    const char *description = dissector_handle_get_description(find_dissector_add_dependency(dis_name, proto_bpsec_cose));
+    dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_cose_msg, proto_bpsec_cose, NULL, description);
+    dissector_add_custom_table_handle("bpsec.result", rkey, hdl);
+
+}
+
 void proto_reg_handoff_bpsec_cose(void) {
     table_cose_msg = find_dissector_table("cose.msgtag");
     handle_cose_msg_hdr = find_dissector_add_dependency("cose.msg.headers", proto_bpsec_cose);
 
     /* Packaged extensions */
-    const gint64 ctxid = 99;
     {
-        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 1);
-        dissector_handle_t hdl = find_dissector_add_dependency("cose_key", proto_bpsec_cose);
+        bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 3);
+        dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_addl_protected, proto_bpsec_cose, NULL, "Additional Protected Headers");
         dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
     {
-        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 2);
-        dissector_handle_t hdl = find_dissector_add_dependency("cose_key_set", proto_bpsec_cose);
+        bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 4);
+        dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_addl_unprotected, proto_bpsec_cose, NULL, "Additional Unprotected Headers");
         dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
     {
-        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 3);
-        dissector_handle_t hdl = create_dissector_handle_with_name(dissect_addl_protected, proto_bpsec_cose, "Additional Protected Headers");
+        bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 5);
+        dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_param_scope, proto_bpsec_cose, NULL, "AAD Scope");
         dissector_add_custom_table_handle("bpsec.param", key, hdl);
     }
-    {
-        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 4);
-        dissector_handle_t hdl = create_dissector_handle_with_name(dissect_addl_unprotected, proto_bpsec_cose, "Additional Unprotected Headers");
-        dissector_add_custom_table_handle("bpsec.param", key, hdl);
-    }
-    {
-        bpsec_id_t *key = bpsec_id_new(NULL, ctxid, 5);
-        dissector_handle_t hdl = create_dissector_handle_with_name(dissect_param_scope, proto_bpsec_cose, "Scope");
-        dissector_add_custom_table_handle("bpsec.param", key, hdl);
-    }
-    {
-        const gint64 cose_msg_ids[] = {16, 17, 18, 96, 97, 98};
-        for (const gint64 *it = cose_msg_ids; it != cose_msg_ids + 6; ++it) {
-            bpsec_id_t *key = bpsec_id_new(NULL, ctxid, *it);
-            char *name = wmem_strdup_printf(wmem_epan_scope(), "COSE message type %" PRId64, *it);
-            dissector_handle_t hdl = create_dissector_handle_with_name(dissect_cose_msg, proto_bpsec_cose, name);
-            dissector_add_custom_table_handle("bpsec.result", key, hdl);
-        }
-    }
+
+    // Propagate COSE tags as result IDs
+    bpsec_cose_result_register(98, "cose_sign");
+    bpsec_cose_result_register(18, "cose_sign1");
+    bpsec_cose_result_register(96, "cose_encrypt");
+    bpsec_cose_result_register(16, "cose_encrypt0");
+    bpsec_cose_result_register(97, "cose_mac");
+    bpsec_cose_result_register(17, "cose_mac0");
 
     reinit_bpsec_cose();
 }

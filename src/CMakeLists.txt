@@ -1,7 +1,7 @@
 
 add_library(
     udpcl MODULE
-    packet-udpcl.h packet-udpcl.c
+    packet-udpcl.c
 )
 target_link_libraries(udpcl PUBLIC PkgConfig::WIRESHARK)
 
