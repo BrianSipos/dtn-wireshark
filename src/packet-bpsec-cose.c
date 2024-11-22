@@ -19,7 +19,7 @@ typedef enum {
 } AadScopeFlag;
 
 /// IANA registered security context ID
-static const int64_t bpsec_cose_ctxid = 99;
+static const int64_t bpsec_cose_ctxid = 3;
 
 /// Protocol handles
 static int proto_bpsec_cose;
@@ -171,7 +171,7 @@ static void reinit_bpsec_cose(void) {
 /// Overall registration of the protocol
 void proto_register_bpsec_cose(void) {
     proto_bpsec_cose = proto_register_protocol(
-        "BPSec COSE", /* name */
+        "BPSec COSE Context", /* name */
         "BPSec COSE", /* short name */
         "bpsec-cose" /* abbrev */
     );
@@ -195,16 +195,6 @@ void proto_reg_handoff_bpsec_cose(void) {
     handle_cose_msg_hdr = find_dissector_add_dependency("cose.msg.headers", proto_bpsec_cose);
 
     /* Packaged extensions */
-    {
-        bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 1);
-        dissector_handle_t hdl = find_dissector_add_dependency("cose_key", proto_bpsec_cose);
-        dissector_add_custom_table_handle("bpsec.param", key, hdl);
-    }
-    {
-        bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 2);
-        dissector_handle_t hdl = find_dissector_add_dependency("cose_key_set", proto_bpsec_cose);
-        dissector_add_custom_table_handle("bpsec.param", key, hdl);
-    }
     {
         bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 3);
         dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_addl_protected, proto_bpsec_cose, NULL, "Additional Protected Headers");
