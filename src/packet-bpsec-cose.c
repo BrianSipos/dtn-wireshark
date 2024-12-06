@@ -94,6 +94,7 @@ static int dissect_param_scope(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
             proto_tree_add_cbor_bitmask(tree_blknum, hf_aad_flags, ett_aad_flags, aad_flags, pinfo, tvb, chunk_flags, flags);
         }
     }
+    proto_item_set_len(item_aad_map, offset);
 
     return offset;
 }
