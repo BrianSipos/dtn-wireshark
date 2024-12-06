@@ -196,6 +196,12 @@ void proto_reg_handoff_bpsec_cose(void) {
 
     /* Packaged extensions */
     {
+        int64_t *key = g_new0(int64_t, 1);
+        *key = 3;
+        dissector_handle_t hdl = create_dissector_handle_with_name_and_description(NULL, proto_bpsec_cose, NULL, "COSE");
+        dissector_add_custom_table_handle("bpsec.ctx", key, hdl);
+    }
+    {
         bpsec_id_t *key = bpsec_id_new(NULL, bpsec_cose_ctxid, 3);
         dissector_handle_t hdl = create_dissector_handle_with_name_and_description(dissect_addl_protected, proto_bpsec_cose, NULL, "Additional Protected Headers");
         dissector_add_custom_table_handle("bpsec.param", key, hdl);
