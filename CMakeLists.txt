@@ -1,10 +1,11 @@
+cmake_minimum_required(VERSION 3.10)
 cmake_policy(VERSION 3.10)
+
 project(
     dtn-wireshark
     LANGUAGES C CXX
     VERSION 0.0
 )
-cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type")
