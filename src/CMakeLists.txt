@@ -9,7 +9,6 @@ add_library(
     bpv7 MODULE
     plugin_bpv7.c
     packet-bpv7-acme.c
-    packet-bpsec-cose.c
 )
 target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
 

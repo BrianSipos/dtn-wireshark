@@ -11,8 +11,6 @@
 
 void proto_register_bp_acme(void);
 void proto_reg_handoff_bp_acme(void);
-void proto_register_bpsec_cose(void);
-void proto_reg_handoff_bpsec_cose(void);
 
 #define PP_STRINGIZE_I(text) #text
 
@@ -33,11 +31,5 @@ WS_DLL_PUBLIC_DEF void plugin_register(void) {
         plugin_bp_acme.register_protoinfo = proto_register_bp_acme;
         plugin_bp_acme.register_handoff = proto_reg_handoff_bp_acme;
         proto_register_plugin(&plugin_bp_acme);
-    }
-    {
-        static proto_plugin plugin_bpsec_cose;
-        plugin_bpsec_cose.register_protoinfo = proto_register_bpsec_cose;
-        plugin_bpsec_cose.register_handoff = proto_reg_handoff_bpsec_cose;
-        proto_register_plugin(&plugin_bpsec_cose);
     }
 }
