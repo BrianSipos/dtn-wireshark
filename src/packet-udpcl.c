@@ -116,6 +116,12 @@ static int hf_ext_ecn_counts = -1;
 static int hf_ecn_ect0 = -1;
 static int hf_ecn_ect1 = -1;
 static int hf_ecn_ce = -1;
+static int hf_ecn_prev_num = -1;
+static int hf_ecn_prev_td = -1;
+static int hf_ecn_ect0_diff = -1;
+static int hf_ecn_ect1_diff = -1;
+static int hf_ecn_ce_diff = -1;
+static int hf_ecn_next_num = -1;
 
 /// Field definitions
 static hf_register_info fields[] = {
@@ -155,6 +161,12 @@ static hf_register_info fields[] = {
     {&hf_ecn_ect0, {"ECT(0) Count", "udpcl.ext.ecn_counts.ect0", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_ecn_ect1, {"ECT(1) Count", "udpcl.ext.ecn_counts.ect1", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
     {&hf_ecn_ce, {"CE Count", "udpcl.ext.ecn_counts.ce", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_ecn_prev_num, {"Previous Counts", "udpcl.ext.ecn_counts.prev_num", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_NONE), 0x0, NULL, HFILL}},
+    {&hf_ecn_prev_td, {"Time Difference", "udpcl.ext.ecn_counts.prev_td", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0, NULL, HFILL}},
+    {&hf_ecn_ect0_diff, {"ECT(0) Difference", "udpcl.ext.ecn_counts.ect0_diff", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_ecn_ect1_diff, {"ECT(1) Difference", "udpcl.ext.ecn_counts.ect1_diff", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_ecn_ce_diff, {"CE Difference", "udpcl.ext.ecn_counts.ce_diff", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL}},
+    {&hf_ecn_next_num, {"Next Counts", "udpcl.ext.ecn_counts.next_num", FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_NONE), 0x0, NULL, HFILL}},
 
     {&hf_xferload_fragments,
         {"Transfer fragments", "udpcl.xferload.fragments",
@@ -259,6 +271,7 @@ static ei_register_info expertitems[] = {
     {&ei_probe_no_confirm, { "udpcl.peer_probe_no_confirm", PI_PROTOCOL, PI_CHAT, "Peer Probe has no associated Peer Confirmation", EXPFILL}},
 };
 
+/// Record reference info for a frame
 typedef struct {
     /// Original frame number
     uint32_t frame_num;
@@ -267,10 +280,23 @@ typedef struct {
 } udpcl_frameinfo_t;
 
 typedef struct {
+    /// Frame the feedback was seen in
+    udpcl_frameinfo_t frame;
+    /// ECT(0) count
+    uint64_t *ect0;
+    /// ECT(1) count
+    uint64_t *ect1;
+    /// CE count
+    uint64_t *ce;
+} udpcl_ecn_fdbk_t;
+
+typedef struct {
     /// Map from uint64* nonce to wmem_tree_t* mapping sequence-number to udpcl_frameinfo_t*
     wmem_map_t *peer_probe;
     /// Map from uint64* nonce to wmem_itree_t* mapping sequence-number to udpcl_frameinfo_t*
     wmem_map_t *peer_confirm;
+    /// Map from frame number (uint32_t) to udpcl_ecn_fdbk_t*
+    wmem_tree_t *ecn_feedback;
 } udpcl_convo_t;
 
 /** Dissect pure bundle data.
@@ -349,7 +375,7 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
 
     uint64_t *xfer_tot_len = NULL;
     uint64_t *xfer_frag_offset = NULL;
-    if (chunk->head_value == 4) {
+    if (chunk_xfer->head_value == 4) {
         chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
         xfer_tot_len = wscbor_require_uint64(pinfo->pool, chunk);
         proto_tree_add_cbor_uint64(tree_ext, hf_xfer_total_length, pinfo, tvb, chunk, xfer_tot_len);
@@ -427,11 +453,7 @@ static int dissect_transfer(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_
                 tree_udpcl
             );
             if (tvb_bundle) {
-                col_append_str(pinfo->cinfo, COL_INFO, " (reassembled)");
                 dissect_bundle(tvb_bundle, pinfo, tree_udpcl);
-            }
-            else {
-                col_append_str(pinfo->cinfo, COL_INFO, " (fragment)");
             }
         }
     }
@@ -664,7 +686,8 @@ static int dissect_peer_confirm(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     return offset;
 }
 
-static int dissect_ecn_counts(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ext_item, void *data _U_) {
+static int dissect_ecn_counts(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ext_item, void *data) {
+    udpcl_convo_t *clconvo = data;
     gint offset = 0;
 
     proto_item *item_ext = proto_tree_add_item(tree_ext_item, hf_ext_ecn_counts, tvb, offset, -1, ENC_NA);
@@ -677,17 +700,78 @@ static int dissect_ecn_counts(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tre
         return 0;
     }
 
+    udpcl_ecn_fdbk_t *fdbk = wmem_tree_lookup32(clconvo->ecn_feedback, pinfo->num);
+    if (!fdbk) {
+        fdbk = wmem_new0(wmem_file_scope(), udpcl_ecn_fdbk_t);
+        fdbk->frame.frame_num = pinfo->num;
+        fdbk->frame.frame_time = pinfo->abs_ts;
+        wmem_tree_insert32(clconvo->ecn_feedback, pinfo->num, fdbk);
+    }
+
     wscbor_chunk_t *chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
     uint64_t *ect0 = wscbor_require_uint64(pinfo->pool, chunk);
     proto_tree_add_cbor_uint64(tree_ext, hf_ecn_ect0, pinfo, tvb, chunk, ect0);
+    if (!(fdbk->ect0) && ect0) {
+        fdbk->ect0 = wmem_new(wmem_file_scope(), uint64_t);
+        *(fdbk->ect0) = *ect0;
+    }
 
     chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
     uint64_t *ect1 = wscbor_require_uint64(pinfo->pool, chunk);
     proto_tree_add_cbor_uint64(tree_ext, hf_ecn_ect1, pinfo, tvb, chunk, ect1);
+    if (!(fdbk->ect1) && ect1) {
+        fdbk->ect1 = wmem_new(wmem_file_scope(), uint64_t);
+        *(fdbk->ect1) = *ect1;
+    }
 
     chunk = wscbor_chunk_read(pinfo->pool, tvb, &offset);
     uint64_t *ce = wscbor_require_uint64(pinfo->pool, chunk);
     proto_tree_add_cbor_uint64(tree_ext, hf_ecn_ce, pinfo, tvb, chunk, ce);
+    if (!(fdbk->ce) && ce) {
+        fdbk->ce = wmem_new(wmem_file_scope(), uint64_t);
+        *(fdbk->ce) = *ce;
+    }
+
+    const udpcl_ecn_fdbk_t *last = wmem_tree_lookup32_le(clconvo->ecn_feedback, pinfo->num - 1);
+    if (last) {
+        proto_item_set_generated(
+            proto_tree_add_uint(tree_ext, hf_ecn_prev_num, NULL, 0, 0, last->frame.frame_num)
+        );
+
+        nstime_t delta;
+        nstime_delta(&delta, &(pinfo->abs_ts), &(last->frame.frame_time));
+        proto_item_set_generated(
+            proto_tree_add_time(tree_ext, hf_ecn_prev_td, NULL, 0, 0, &delta)
+        );
+
+        if (last->ect0) {
+            const uint64_t diff = *ect0 - *(last->ect0);
+            proto_item_set_generated(
+                proto_tree_add_uint64(tree_ext, hf_ecn_ect0_diff, NULL, 0, 0, diff)
+            );
+        }
+
+        if (last->ect1) {
+            const uint64_t diff = *ect1 - *(last->ect1);
+            proto_item_set_generated(
+                proto_tree_add_uint64(tree_ext, hf_ecn_ect1_diff, NULL, 0, 0, diff)
+            );
+        }
+
+        if (last->ce) {
+            const uint64_t diff = *ce - *(last->ce);
+            proto_item_set_generated(
+                proto_tree_add_uint64(tree_ext, hf_ecn_ce_diff, NULL, 0, 0, diff)
+            );
+        }
+    }
+
+    const udpcl_ecn_fdbk_t *next = wmem_tree_lookup32_ge(clconvo->ecn_feedback, pinfo->num + 1);
+    if (next) {
+        proto_item_set_generated(
+            proto_tree_add_uint(tree_ext, hf_ecn_next_num, NULL, 0, 0, next->frame.frame_num)
+        );
+    }
 
     proto_item_set_len(item_ext, offset);
     return offset;
@@ -722,6 +806,7 @@ static int dissect_extmap(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
         clconvo = wmem_new0(alloc, udpcl_convo_t);
         clconvo->peer_probe = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
         clconvo->peer_confirm = wmem_map_new(alloc, g_int64_hash, g_int64_equal);
+        clconvo->ecn_feedback = wmem_tree_new(alloc);
 
         conversation_add_proto_data(convo, proto_udpcl, clconvo);
     }
@@ -762,23 +847,21 @@ static int dissect_extmap(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
         const char *dis_name = NULL;
         if (dissector) {
             sublen = call_dissector_only(dissector, tvb_item, pinfo, tree_ext_item, clconvo);
-            dis_name = dissector_handle_get_dissector_name(dissector);
+            dis_name = dissector_handle_get_description(dissector);
         }
         else if (*key >= 0) {
             // negative keys are private use
             expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
         }
 
+        if (dis_name) {
+            proto_item_set_text(item_ext_item, "%s: %s (%" PRId64 ")", PITEM_HFINFO(item_ext_item)->name, dis_name, *key);
+        }
+
         if (ix > 0) {
             col_append_str(pinfo->cinfo, COL_INFO, ",");
         }
-        if (dis_name) {
-            proto_item_set_text(item_ext_item, "Extension ID: %s (%" PRId64 ")", dis_name, *key);
-            col_append_fstr(pinfo->cinfo, COL_INFO, "%s (%" PRId64 ")", dis_name, *key);
-        }
-        else {
-            col_append_fstr(pinfo->cinfo, COL_INFO, "%" PRIu64, *key);
-        }
+        col_append_fstr(pinfo->cinfo, COL_INFO, "%" PRIu64, *key);
 
         // show something even if known dissector failed
         if (sublen == 0) {
@@ -833,7 +916,7 @@ static int dissect_udpcl(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
             ssl_starttls_post_ack(handle_dtls, pinfo, handle_udpcl);
         }
         else if (first_head->type_major == CBOR_TYPE_MAP) {
-            col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Extension Map");
+            col_append_sep_str(pinfo->cinfo, COL_INFO, NULL, "Extension");
             proto_item_append_text(item_udpcl, ", Extension Map");
 
             const int sublen = dissect_extmap(tvb, pinfo, tree_udpcl, first_head);

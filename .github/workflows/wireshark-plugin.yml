@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     env:
       CC: ccache gcc
@@ -35,7 +35,6 @@ jobs:
         cd wireshark
         git checkout master
         sudo ./tools/debian-setup.sh ${COMMON_APT_GET_ARGS} --install-optional --install-deb-deps --install-test-deps \
-            awscli \
             build-essential \
             ccache \
             colorized-logs \
@@ -60,7 +59,10 @@ jobs:
         sudo cmake --install build --component Development
     - name: dependencies
       run: |
-        sudo apt-get update && sudo apt-get install git cmake build-essential libgcrypt-dev gnutls-dev libgtest-dev
+        sudo apt-get update
+        sudo apt-get install -y \
+            git cmake build-essential \
+            libgcrypt-dev gnutls-dev libgtest-dev
     - name: configure
       run: |
         cmake -S . -B build -GNinja
@@ -72,6 +74,6 @@ jobs:
       run: |
         cd build
         ctest -V
-        tshark -G protocols | grep bpsec-cose
+        tshark -G protocols | grep udpcl
         tshark -G protocols | grep bpv7.acme
         
