@@ -60,9 +60,9 @@ jobs:
     - name: dependencies
       run: |
         sudo apt-get update
-	sudo apt-get install -y \
-	    git cmake build-essential \
-	    libgcrypt-dev gnutls-dev libgtest-dev
+        sudo apt-get install -y \
+            git cmake build-essential \
+            libgcrypt-dev gnutls-dev libgtest-dev
     - name: configure
       run: |
         cmake -S . -B build -GNinja
