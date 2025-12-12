@@ -854,16 +854,14 @@ static int dissect_extmap(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
             expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
         }
 
+        if (dis_name) {
+            proto_item_set_text(item_ext_item, "%s: %s (%" PRId64 ")", PITEM_HFINFO(item_ext_item)->name, dis_name, *key);
+        }
+
         if (ix > 0) {
             col_append_str(pinfo->cinfo, COL_INFO, ",");
         }
-        if (dis_name) {
-            proto_item_set_text(item_ext_item, "%s: %s (%" PRId64 ")", PITEM_HFINFO(item_label)->name, dis_name, *key);
-            col_append_fstr(pinfo->cinfo, COL_INFO, "%s (%" PRId64 ")", dis_name, *key);
-        }
-        else {
-            col_append_fstr(pinfo->cinfo, COL_INFO, "%" PRIu64, *key);
-        }
+        col_append_fstr(pinfo->cinfo, COL_INFO, "%" PRIu64, *key);
 
         // show something even if known dissector failed
         if (sublen == 0) {
