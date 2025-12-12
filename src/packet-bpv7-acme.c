@@ -119,12 +119,12 @@ static void bp_acme_history_cleanup(gpointer key, gpointer value, gpointer user_
     }
 }
 
-static proto_item * proto_tree_add_bytes_base64url(proto_tree *tree, int hfindex, tvbuff_t *tvb,
+static proto_item * proto_tree_add_bytes_base64url(proto_tree *tree, packet_info *pinfo, int hfindex, tvbuff_t *tvb,
                                          gint start, gint length) {
     if (length < 0) {
         length = tvb_reported_length(tvb);
     }
-    void *data = tvb_memdup(wmem_packet_scope(), tvb, start, length);
+    void *data = tvb_memdup(pinfo->pool, tvb, start, length);
     gchar *str = g_base64_encode((guint8 *)data, length);
     // convert to base64url
     for (gchar *it = str; *it != '\0'; ++it) {
@@ -142,7 +142,7 @@ static proto_item * proto_tree_add_bytes_base64url(proto_tree *tree, int hfindex
     }
     proto_item *item = proto_tree_add_string(tree, hfindex, tvb, start, length, str);
     g_free(str);
-    wmem_free(wmem_packet_scope(), data);
+    wmem_free(pinfo->pool, data);
     return item;
 }
 
@@ -284,7 +284,7 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                     tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
                     item_id_chal = proto_tree_add_cbor_bstr(tree_key, hf_id_chal, pinfo, tvb, chunk);
                     PROTO_ITEM_SET_GENERATED(
-                        proto_tree_add_bytes_base64url(tree_key, hf_as_b64, data, 0, -1)
+                        proto_tree_add_bytes_base64url(tree_key, pinfo, hf_as_b64, data, 0, -1)
                     );
                     corr->id_chal = bp_acme_bytes_init(data);
                     break;
@@ -294,7 +294,7 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                     tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
                     item_token_bundle = proto_tree_add_cbor_bstr(tree_key, hf_token_bundle, pinfo, tvb, chunk);
                     PROTO_ITEM_SET_GENERATED(
-                        proto_tree_add_bytes_base64url(tree_key, hf_as_b64, data, 0, -1)
+                        proto_tree_add_bytes_base64url(tree_key, pinfo, hf_as_b64, data, 0, -1)
                     );
                     corr->token_bundle = bp_acme_bytes_init(data);
                     break;
@@ -312,7 +312,7 @@ static int dissect_bp_acme(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
                         tvbuff_t *data = wscbor_require_bstr(pinfo->pool, chunk);
                         proto_tree_add_cbor_bstr(tree_digest, hf_key_auth_digest, pinfo, tvb, chunk);
                         PROTO_ITEM_SET_GENERATED(
-                                proto_tree_add_bytes_base64url(tree_digest, hf_as_b64, data, 0, -1)
+                                proto_tree_add_bytes_base64url(tree_digest, pinfo, hf_as_b64, data, 0, -1)
                         );
                     }
                     proto_item_set_end(item_key_auth, tvb, offset);
