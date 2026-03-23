@@ -1,3 +1,10 @@
+/* packet-btpu.c
+ * Routines for UDP Convergence Layer Protocol and its Version 2 dissection.
+ * References:
+ *     UDPCLv2 draft: https://www.ietf.org/archive/id/draft-ietf-dtn-udpcl-03.html
+ *
+ * Copyright 2021-2026, Brian Sipos <brian.sipos@gmail.com>
+ */
 #include <epan/packet.h>
 #include <epan/prefs.h>
 #include <epan/proto.h>
@@ -854,7 +861,7 @@ static int dissect_extmap(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree_ud
             expert_add_info(pinfo, item_ext_item, &ei_ext_key_unknown);
         }
 
-        if (dis_name) {
+        if (item_ext_item && dis_name) {
             proto_item_set_text(item_ext_item, "%s: %s (%" PRId64 ")", PITEM_HFINFO(item_ext_item)->name, dis_name, *key);
         }
 
