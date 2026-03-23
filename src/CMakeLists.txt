@@ -6,6 +6,12 @@ add_library(
 target_link_libraries(udpcl PUBLIC PkgConfig::WIRESHARK)
 
 add_library(
+    btpu MODULE
+    packet-btpu.c
+)
+target_link_libraries(btpu PUBLIC PkgConfig::WIRESHARK)
+
+add_library(
     bpv7 MODULE
     plugin_bpv7.c
     packet-bpv7-acme.c
@@ -14,7 +20,7 @@ target_link_libraries(bpv7 PUBLIC PkgConfig::WIRESHARK)
 
 if(INSTALL_MODULE_PATH)
     install(
-        TARGETS udpcl bpv7
+        TARGETS udpcl btpu bpv7
         LIBRARY DESTINATION ${INSTALL_MODULE_PATH}
     )
 endif(INSTALL_MODULE_PATH)
